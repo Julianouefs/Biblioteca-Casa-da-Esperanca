@@ -63,7 +63,7 @@ st.divider()
 
 # =====================
 # 🔒 Área de administração (acesso só após login)
-with st.expander("🔐 Administração"):
+with st.expander("🔐 Administrador"):
     if not st.session_state.modo_admin:
         with st.form("login_form"):
             st.write("Área restrita para administradores.")
@@ -79,31 +79,34 @@ with st.expander("🔐 Administração"):
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
+        # ✅ Área visível só para admin após login
         st.subheader("🛠️ Upload de nova planilha")
         arquivo_novo = st.file_uploader("Carregar planilha .xlsx", type=["xlsx"])
         if arquivo_novo:
             try:
                 df_novo = pd.read_excel(arquivo_novo)
-                if not all(col in df_novo.columns for col in ["nome", "autor", "codigo"]):
-                    st.error("A planilha deve conter as colunas: 'nome', 'autor' e 'codigo'")
+                if not all(col in df_novo.columns for col in ["codigo", "nome", "autor"]):
+                    st.error("A planilha deve conter as colunas: 'codigo', 'nome' e 'autor'")
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
                     st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
-import io
 
-st.subheader("📤 Baixar planilha atual")
-if df is not None:
-    buffer = io.BytesIO()
-    df.to_excel(buffer, index=False, engine='openpyxl')
-    buffer.seek(0)
-    st.download_button(
-        label="📥 Baixar planilha",
-        data=buffer,
-        file_name="planilha_biblioteca_backup.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-else:
-    st.info("Nenhuma planilha disponível para download.")
+        # ✅ Botão de download — SÓ aparece após login
+        st.subheader("📤 Baixar planilha atual")
+        if df is not None:
+            import io
+            buffer = io.BytesIO()
+            df.to_excel(buffer, index=False, engine='openpyxl')
+            buffer.seek(0)
+            st.download_button(
+                label="📥 Baixar planilha",
+                data=buffer,
+                file_name="planilha_biblioteca_backup.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("Nenhuma planilha disponível para download.")
+
