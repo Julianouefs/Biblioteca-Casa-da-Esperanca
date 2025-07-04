@@ -92,3 +92,18 @@ with st.expander("🔐 Administração"):
                     st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
+import io
+
+st.subheader("📤 Baixar planilha atual")
+if df is not None:
+    buffer = io.BytesIO()
+    df.to_excel(buffer, index=False, engine='openpyxl')
+    buffer.seek(0)
+    st.download_button(
+        label="📥 Baixar planilha",
+        data=buffer,
+        file_name="planilha_biblioteca_backup.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.info("Nenhuma planilha disponível para download.")
