@@ -12,8 +12,9 @@ st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered"
 st.title("📚 Biblioteca Casa da Esperança")
 
 # 🔐 Configurações do admin
-LOGIN_CORRETO = "admin"
-SENHA_CORRETA = "asdf1234++"
+LOGIN_CORRETO = st.secrets["login"]
+SENHA_CORRETA = st.secrets["senha"]
+
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 
 # Sessão para controle do modo administrador
@@ -30,7 +31,7 @@ def remover_acentos(texto):
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
 gc = gspread.authorize(credentials)
-ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
+ID_PLANILHA_EMPRESTIMOS = st.secrets["id_planilha_emprestimos"]
 worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
 def obter_codigos_emprestados():
