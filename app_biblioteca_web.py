@@ -85,8 +85,8 @@ with st.expander("🔐 Administrador"):
         if arquivo_novo:
             try:
                 df_novo = pd.read_excel(arquivo_novo)
-                if not all(col in df_novo.columns for col in ["codigo", "nome", "Autor"]):
-                    st.error("A planilha deve conter as colunas: 'codigo', 'nome' e 'Autor'")
+                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor"]):
+                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro' e 'Autor'")
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
