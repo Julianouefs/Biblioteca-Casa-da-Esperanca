@@ -66,8 +66,7 @@ credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["googl
 gc = gspread.authorize(credentials)
 
 # 📝 ID da planilha de empréstimos no Google Sheets
-ID_PLANILHA_EMPRESTIMOS = "https://docs.google.com/spreadsheets/d/1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do/edit?gid=0#gid=0
-"  # Substitua pelo seu ID real
+ID_PLANILHA_EMPRESTIMOS = "COLE_AQUI_O_ID_DA_PLANILHA"  # Substitua pelo seu ID real
 
 # 📄 Abre a planilha de empréstimos
 worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
