@@ -55,8 +55,6 @@ if df is not None:
 
 st.divider()
 
-
-
 # =====================
 # 🔒 Área de administração (acesso só após login)
 with st.expander("🔐 Administrador"):
@@ -106,52 +104,49 @@ with st.expander("🔐 Administrador"):
         else:
             st.info("Nenhuma planilha disponível para download.")
 
-# =====================
-# 📘 Controle de Empréstimos
+        # =====================
+        # 📘 Registro de Empréstimos (somente admin)
+        st.subheader("📘 Registro de Empréstimos")
 
-st.subheader("📘 Registro de Empréstimos")
+        # 🔗 Conecta ao Google Sheets
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
+        gc = gspread.authorize(credentials)
 
-# 🔗 Conecta ao Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
-gc = gspread.authorize(credentials)
+        # 📝 ID da planilha de empréstimos no Google Sheets
+        ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID real
 
-# 📝 ID da planilha de empréstimos no Google Sheets
-ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID real
+        # 📄 Abre a planilha de empréstimos
+        worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
-# 📄 Abre a planilha de empréstimos
-worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+        # 📤 Formulário de registro de novo empréstimo
+        with st.form("form_emprestimo"):
+            nome_pessoa = st.text_input("Nome da pessoa")
+            codigo_livro = st.text_input("Código do livro")
+            data_emprestimo = st.date_input("Data do empréstimo")
 
-# 📤 Formulário de registro de novo empréstimo
-with st.form("form_emprestimo"):
-    nome_pessoa = st.text_input("Nome da pessoa")
-    codigo_livro = st.text_input("Código do livro")
-    data_emprestimo = st.date_input("Data do empréstimo")
+            enviar = st.form_submit_button("Registrar Empréstimo")
 
-    enviar = st.form_submit_button("Registrar Empréstimo")
+            if enviar:
+                # Busca nome do livro na planilha local
+                nome_livro = ""
+                if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
+                    match = df[df["codigo"].astype(str) == codigo_livro.strip()]
+                    if not match.empty:
+                        nome_livro = match.iloc[0]["Título do Livro"]
 
-    if enviar:
-        # Busca nome do livro na planilha local
-        nome_livro = ""
-        if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
-            match = df[df["codigo"].astype(str) == codigo_livro.strip()]
-            if not match.empty:
-                nome_livro = match.iloc[0]["Título do Livro"]
-        
-        if nome_livro == "":
-            st.warning("Código de livro não encontrado na planilha principal.")
-        elif not nome_pessoa.strip():
-            st.warning("Informe o nome da pessoa.")
-        else:
-            nova_linha = [
-                nome_pessoa.strip(),
-                codigo_livro.strip(),
-                nome_livro,
-                str(data_emprestimo),
-                "",  # data_devolucao vazia ao registrar empréstimo
-                "Emprestado"
-            ]
-            worksheet.append_row(nova_linha)
-            st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-
-st.divider()
+                if nome_livro == "":
+                    st.warning("Código de livro não encontrado na planilha principal.")
+                elif not nome_pessoa.strip():
+                    st.warning("Informe o nome da pessoa.")
+                else:
+                    nova_linha = [
+                        nome_pessoa.strip(),
+                        codigo_livro.strip(),
+                        nome_livro,
+                        str(data_emprestimo),
+                        "",  # data_devolucao vazia ao registrar empréstimo
+                        "Emprestado"
+                    ]
+                    worksheet.append_row(nova_linha)
+                    st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
