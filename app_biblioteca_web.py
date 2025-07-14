@@ -30,7 +30,7 @@ else:
 # 🔍 Tela pública de pesquisa
 if df is not None:
     st.subheader("🔍 Pesquisa de Livros")
-    coluna_busca = st.selectbox("Buscar por:", ["nome", "autor", "codigo"])
+    coluna_busca = st.selectbox("Buscar por:", ["Título do Livro", "Autor", "codigo"])
     termo = st.text_input(f"Digite o termo para buscar em '{coluna_busca}'")
 
     import unicodedata
