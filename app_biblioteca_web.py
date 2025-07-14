@@ -31,25 +31,37 @@ def remover_acentos(texto):
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
 gc = gspread.authorize(credentials)
-ID_PLANILHA_EMPRESTIMOS = st.secrets["id_planilha_emprestimos"]
+ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
-def obter_codigos_emprestados():
+# Função para contar empréstimos por código
+def contar_emprestimos():
     try:
         dados = worksheet.get_all_records()
-        return {linha["codigo_livro"] for linha in dados if linha["status"] == "Emprestado"}
+        contagem = {}
+        for linha in dados:
+            cod = linha["codigo_livro"]
+            if linha["status"] == "Emprestado":
+                contagem[cod] = contagem.get(cod, 0) + 1
+        return contagem
     except:
-        return set()
+        return {}
 
-codigos_emprestados = obter_codigos_emprestados()
+emprestimos_em_aberto = contar_emprestimos()
 
 # 📄 Carrega a planilha salva localmente (última versão)
 df = None
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
-        if "codigo" in df.columns:
-            df["status"] = df["codigo"].astype(str).apply(lambda x: "Emprestado" if x in codigos_emprestados else "Disponível")
+        if "codigo" in df.columns and "quantidade" in df.columns:
+            def gerar_status(codigo, total):
+                emprestados = emprestimos_em_aberto.get(str(codigo), 0)
+                disponiveis = total - emprestados
+                if disponiveis == 0:
+                    return f"Emprestado ({emprestados}/{total})"
+                return f"Disponível ({disponiveis}/{total})"
+            df["status"] = df.apply(lambda row: gerar_status(str(row["codigo"]), int(row["quantidade"])), axis=1)
     except:
         st.error("Erro ao ler a planilha salva.")
 else:
@@ -94,8 +106,8 @@ with st.expander("🔐 Administrador"):
         if arquivo_novo:
             try:
                 df_novo = pd.read_excel(arquivo_novo)
-                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor"]):
-                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro' e 'Autor'")
+                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor", "quantidade"]):
+                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro', 'Autor', 'quantidade'")
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
