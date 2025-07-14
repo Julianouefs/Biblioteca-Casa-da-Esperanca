@@ -4,6 +4,7 @@ import os
 import unicodedata
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
 
@@ -13,10 +14,18 @@ st.title("📚 Biblioteca Casa da Esperança")
 LOGIN_CORRETO = "admin"
 SENHA_CORRETA = "asdf1234++"
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
+ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID
 
 # Sessão para controle do modo administrador
 if 'modo_admin' not in st.session_state:
     st.session_state.modo_admin = False
+
+# =====================
+# 🔗 Conecta ao Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
+gc = gspread.authorize(credentials)
+worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
 # =====================
 # 📄 Carrega a planilha salva localmente (última versão)
@@ -30,11 +39,23 @@ else:
     st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
 
 # =====================
+# 📥 Carrega a planilha de empréstimos
+df_emprestimos = pd.DataFrame(worksheet.get_all_records())
+
+# =====================
+# Adiciona coluna de status na planilha principal
+if df is not None:
+    df["Status"] = "Disponível"
+    if not df_emprestimos.empty:
+        codigos_emprestados = df_emprestimos[df_emprestimos["data_devolucao"] == ""]["codigo_livro"].astype(str).tolist()
+        df["codigo"] = df["codigo"].astype(str)
+        df.loc[df["codigo"].isin(codigos_emprestados), "Status"] = "Emprestado"
+
+# =====================
 # Função para remover acentos
 def remover_acentos(texto):
     if isinstance(texto, str):
-        return ''.join(c for c in unicodedata.normalize('NFD', texto)
-                       if unicodedata.category(c) != 'Mn').lower()
+        return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn').lower()
     return texto
 
 # =====================
@@ -56,7 +77,7 @@ if df is not None:
 st.divider()
 
 # =====================
-# 🔒 Área de administração (acesso só após login)
+# 🔒 Área de administração
 with st.expander("🔐 Administrador"):
     if not st.session_state.modo_admin:
         with st.form("login_form"):
@@ -73,7 +94,6 @@ with st.expander("🔐 Administrador"):
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
-        # ✅ Área visível só para admin após login
         st.subheader("🛠️ Upload de nova planilha")
         arquivo_novo = st.file_uploader("Carregar planilha .xlsx", type=["xlsx"])
         if arquivo_novo:
@@ -88,7 +108,6 @@ with st.expander("🔐 Administrador"):
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
-        # ✅ Botão de download — SÓ aparece após login
         st.subheader("📤 Baixar planilha atual")
         if df is not None:
             import io
@@ -104,22 +123,7 @@ with st.expander("🔐 Administrador"):
         else:
             st.info("Nenhuma planilha disponível para download.")
 
-        # =====================
-        # 📘 Registro de Empréstimos (somente admin)
         st.subheader("📘 Registro de Empréstimos")
-
-        # 🔗 Conecta ao Google Sheets
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
-        gc = gspread.authorize(credentials)
-
-        # 📝 ID da planilha de empréstimos no Google Sheets
-        ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID real
-
-        # 📄 Abre a planilha de empréstimos
-        worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
-
-        # 📤 Formulário de registro de novo empréstimo
         with st.form("form_emprestimo"):
             nome_pessoa = st.text_input("Nome da pessoa")
             codigo_livro = st.text_input("Código do livro")
@@ -128,7 +132,6 @@ with st.expander("🔐 Administrador"):
             enviar = st.form_submit_button("Registrar Empréstimo")
 
             if enviar:
-                # Busca nome do livro na planilha local
                 nome_livro = ""
                 if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
                     match = df[df["codigo"].astype(str) == codigo_livro.strip()]
@@ -145,8 +148,20 @@ with st.expander("🔐 Administrador"):
                         codigo_livro.strip(),
                         nome_livro,
                         str(data_emprestimo),
-                        "",  # data_devolucao vazia ao registrar empréstimo
+                        "",  # data_devolucao
                         "Emprestado"
                     ]
                     worksheet.append_row(nova_linha)
                     st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+
+        st.subheader("📗 Baixa de Devolução")
+        codigos_em_aberto = df_emprestimos[df_emprestimos["data_devolucao"] == ""]
+
+        if not codigos_em_aberto.empty:
+            codigo_baixa = st.selectbox("Selecione um empréstimo para dar baixa:", codigos_em_aberto["codigo_livro"] + " - " + codigos_em_aberto["nome_pessoa"])
+            if st.button("Confirmar Baixa de Devolução"):
+                idx = codigos_em_aberto.index[codigos_em_aberto["codigo_livro"] == codigo_baixa.split(" - ")[0]]
+                if not idx.empty:
+                    worksheet.update_cell(idx[0] + 2, 5, datetime.today().strftime("%Y-%m-%d"))  # coluna E (data_devolucao)
+                    worksheet.update_cell(idx[0] + 2, 6, "Devolvido")  # coluna F (status)
+                    st.success("📗 Devolução registrada com sucesso. Atualize a página para ver a mudança.")
