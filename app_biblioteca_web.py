@@ -3,8 +3,9 @@ import pandas as pd
 import os
 import unicodedata
 import gspread
+import io
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import date
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
 
@@ -14,51 +15,45 @@ st.title("📚 Biblioteca Casa da Esperança")
 LOGIN_CORRETO = "admin"
 SENHA_CORRETA = "asdf1234++"
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
-ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID
 
 # Sessão para controle do modo administrador
 if 'modo_admin' not in st.session_state:
     st.session_state.modo_admin = False
 
-# =====================
-# 🔗 Conecta ao Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
-gc = gspread.authorize(credentials)
-worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
-
-# =====================
-# 📄 Carrega a planilha salva localmente (última versão)
-df = None
-if os.path.exists(ARQUIVO_PLANILHA):
-    try:
-        df = pd.read_excel(ARQUIVO_PLANILHA)
-    except:
-        st.error("Erro ao ler a planilha salva.")
-else:
-    st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
-
-# =====================
-# 📥 Carrega a planilha de empréstimos
-df_emprestimos = pd.DataFrame(worksheet.get_all_records())
-
-# =====================
-# Adiciona coluna de status na planilha principal
-if df is not None:
-    df["Status"] = "Disponível"
-    if not df_emprestimos.empty:
-        codigos_emprestados = df_emprestimos[df_emprestimos["data_devolucao"] == ""]["codigo_livro"].astype(str).tolist()
-        df["codigo"] = df["codigo"].astype(str)
-        df.loc[df["codigo"].isin(codigos_emprestados), "Status"] = "Emprestado"
-
-# =====================
 # Função para remover acentos
 def remover_acentos(texto):
     if isinstance(texto, str):
         return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn').lower()
     return texto
 
-# =====================
+# 🔗 Conecta ao Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
+gc = gspread.authorize(credentials)
+ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
+worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+
+def obter_codigos_emprestados():
+    try:
+        dados = worksheet.get_all_records()
+        return {linha["codigo_livro"] for linha in dados if linha["status"] == "Emprestado"}
+    except:
+        return set()
+
+codigos_emprestados = obter_codigos_emprestados()
+
+# 📄 Carrega a planilha salva localmente (última versão)
+df = None
+if os.path.exists(ARQUIVO_PLANILHA):
+    try:
+        df = pd.read_excel(ARQUIVO_PLANILHA)
+        if "codigo" in df.columns:
+            df["status"] = df["codigo"].astype(str).apply(lambda x: "Emprestado" if x in codigos_emprestados else "Disponível")
+    except:
+        st.error("Erro ao ler a planilha salva.")
+else:
+    st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
+
 # 🔍 Tela pública de pesquisa
 if df is not None:
     st.subheader("🔍 Pesquisa de Livros")
@@ -76,8 +71,7 @@ if df is not None:
 
 st.divider()
 
-# =====================
-# 🔒 Área de administração
+# 🔒 Área de administração (acesso só após login)
 with st.expander("🔐 Administrador"):
     if not st.session_state.modo_admin:
         with st.form("login_form"):
@@ -90,7 +84,7 @@ with st.expander("🔐 Administrador"):
                 if usuario == LOGIN_CORRETO and senha == SENHA_CORRETA:
                     st.success("Login realizado com sucesso.")
                     st.session_state.modo_admin = True
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
@@ -104,13 +98,12 @@ with st.expander("🔐 Administrador"):
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
-                    st.experimental_rerun()
+                    st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
         st.subheader("📤 Baixar planilha atual")
         if df is not None:
-            import io
             buffer = io.BytesIO()
             df.to_excel(buffer, index=False, engine='openpyxl')
             buffer.seek(0)
@@ -123,12 +116,12 @@ with st.expander("🔐 Administrador"):
         else:
             st.info("Nenhuma planilha disponível para download.")
 
+        # 📘 Registro de Empréstimos
         st.subheader("📘 Registro de Empréstimos")
         with st.form("form_emprestimo"):
             nome_pessoa = st.text_input("Nome da pessoa")
             codigo_livro = st.text_input("Código do livro")
-            data_emprestimo = st.date_input("Data do empréstimo")
-
+            data_emprestimo = st.date_input("Data do empréstimo", value=date.today())
             enviar = st.form_submit_button("Registrar Empréstimo")
 
             if enviar:
@@ -148,20 +141,40 @@ with st.expander("🔐 Administrador"):
                         codigo_livro.strip(),
                         nome_livro,
                         str(data_emprestimo),
-                        "",  # data_devolucao
+                        "",
                         "Emprestado"
                     ]
                     worksheet.append_row(nova_linha)
                     st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                    st.rerun()
 
-        st.subheader("📗 Baixa de Devolução")
-        codigos_em_aberto = df_emprestimos[df_emprestimos["data_devolucao"] == ""]
+        st.subheader("📥 Baixa de Devolução")
+        dados = worksheet.get_all_records()
+        emprestimos_abertos = [linha for linha in dados if linha["status"] == "Emprestado"]
 
-        if not codigos_em_aberto.empty:
-            codigo_baixa = st.selectbox("Selecione um empréstimo para dar baixa:", codigos_em_aberto["codigo_livro"] + " - " + codigos_em_aberto["nome_pessoa"])
-            if st.button("Confirmar Baixa de Devolução"):
-                idx = codigos_em_aberto.index[codigos_em_aberto["codigo_livro"] == codigo_baixa.split(" - ")[0]]
-                if not idx.empty:
-                    worksheet.update_cell(idx[0] + 2, 5, datetime.today().strftime("%Y-%m-%d"))  # coluna E (data_devolucao)
-                    worksheet.update_cell(idx[0] + 2, 6, "Devolvido")  # coluna F (status)
-                    st.success("📗 Devolução registrada com sucesso. Atualize a página para ver a mudança.")
+        if emprestimos_abertos:
+            opcoes = [f"{linha['codigo_livro']} - {linha['nome_livro']} ({linha['nome_pessoa']})" for linha in emprestimos_abertos]
+            escolha = st.selectbox("Selecione um empréstimo para dar baixa:", opcoes)
+            confirmar = st.button("Confirmar Devolução")
+
+            if confirmar:
+                index = opcoes.index(escolha)
+                linha_original = emprestimos_abertos[index]
+                todas_linhas = worksheet.get_all_values()
+
+                for i, linha in enumerate(todas_linhas):
+                    if i == 0:
+                        continue
+                    if (linha[0] == linha_original['nome_pessoa'] and
+                        linha[1] == linha_original['codigo_livro'] and
+                        linha[2] == linha_original['nome_livro'] and
+                        linha[5] == 'Emprestado'):
+                        worksheet.update_cell(i+1, 5, str(date.today()))
+                        worksheet.update_cell(i+1, 6, "Devolvido")
+                        st.success("📗 Devolução registrada com sucesso.")
+                        st.rerun()
+                        break
+        else:
+            st.info("Nenhum empréstimo ativo encontrado.")
+
+st.divider()
