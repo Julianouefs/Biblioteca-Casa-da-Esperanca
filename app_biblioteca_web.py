@@ -140,7 +140,9 @@ with st.expander("🔐 Administrador"):
             if enviar:
                 nome_livro = ""
                 if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
-                    match = df[df["codigo"].astype(str) == codigo_livro.strip()]
+                    codigo_normalizado = codigo_livro.strip().lower()
+                    match = df[df["codigo"].astype(str).str.strip().str.lower() == codigo_normalizado]
+
                     if not match.empty:
                         nome_livro = match.iloc[0]["Título do Livro"]
 
