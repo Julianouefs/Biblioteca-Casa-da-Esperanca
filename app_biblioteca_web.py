@@ -17,7 +17,7 @@ ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 @st.cache_data
 def carregar_livros():
     try:
-        df = pd.read_excel(https://docs.google.com/spreadsheets/d/1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do/edit?gid=0#gid=0)
+        df = pd.read_excel("https://docs.google.com/spreadsheets/d/1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do/edit?gid=0#gid=0")
         df["codigo"] = df["codigo"].astype(str).str.lower()
         df["quantidade"] = df["quantidade"].fillna(0).astype(int)
         return df
