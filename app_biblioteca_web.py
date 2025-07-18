@@ -132,7 +132,9 @@ with st.expander("🔐 Administrador"):
 
         # Validação
         def validar_codigo(codigo):
-            return re.match(r"^[\w-]+$", codigo.strip()) is not None
+            # Permite letras (com ou sem acento), números, espaços e os símbolos - / . _
+            return re.match(r"^[\w\sÁ-ÿçÇ\-/_.]+$", codigo.strip(), re.UNICODE) is not None
+
 
         with st.form("form_emprestimo"):
             nome_pessoa = st.text_input("Nome da pessoa")
