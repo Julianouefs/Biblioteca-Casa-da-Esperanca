@@ -201,6 +201,7 @@ with st.expander("🔐 Administrador"):
                                 ]
                                 try:
                                     worksheet.append_row(nova_linha)
+                                    st.experimental_rerun()
                                     st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
                                     st.experimental_rerun()
                                 except Exception as e:
