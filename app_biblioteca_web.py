@@ -11,7 +11,7 @@ ID_PLANILHA_EMPRESTIMOS = "ID_DA_PLANILHA_EMPRESTIMOS"
 
 # Substitua isso pelo seu JSON de credenciais, mantido seguro.
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPE)
+credentials = Credentials.from_service_account_info(st.secrets["google_service_account"], scopes=SCOPE)
 gc = gspread.authorize(credentials)
 
 # === FUNÇÕES AUXILIARES ===
