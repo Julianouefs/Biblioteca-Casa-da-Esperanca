@@ -3,6 +3,11 @@ import pandas as pd
 import os
 import unicodedata
 import gspread
+import hashlib
+import re
+
+def hash_senha(senha):
+    return hashlib.sha256(senha.encode()).hexdigest()
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
@@ -10,8 +15,8 @@ st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered"
 st.title("📚 Biblioteca Casa da Esperança")
 
 # 🔐 Configurações do admin
-LOGIN_CORRETO = "admin"
-SENHA_CORRETA = "asdf1234++"
+LOGIN_CORRETO = st.secrets["admin"]["usuario"]
+SENHA_CORRETA = st.secrets["admin"]["senha"]
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 
 # Sessão para controle do modo administrador
@@ -114,7 +119,7 @@ with st.expander("🔐 Administrador"):
         gc = gspread.authorize(credentials)
 
         # 📝 ID da planilha de empréstimos no Google Sheets
-        ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"  # Substitua pelo seu ID real
+        ID_PLANILHA_EMPRESTIMOS = st.secrets["google"]["planilha_emprestimos_id"]
 
         # 📄 Abre a planilha de empréstimos
         worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
