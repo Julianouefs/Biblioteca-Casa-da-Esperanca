@@ -6,7 +6,7 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
-ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
+ID_PLANILHA_EMPRESTIMOS = "COLOQUE_AQUI_O_ID_REAL_DA_PLANILHA_EMPRESTIMOS"
 
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
@@ -17,9 +17,13 @@ def remover_acentos(txt):
     return unidecode(str(txt)).lower()
 
 def carregar_livros():
-    df = pd.read_excel("planilha_biblioteca.xlsx")
-    df.columns = [col.strip() for col in df.columns]
-    return df
+    try:
+        df = pd.read_excel("planilha_biblioteca.xlsx")
+        df.columns = [col.strip() for col in df.columns]
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar a planilha local de livros: {e}")
+        return pd.DataFrame()
 
 def carregar_emprestimos():
     try:
@@ -28,6 +32,9 @@ def carregar_emprestimos():
         return pd.DataFrame(dados)
     except gspread.exceptions.SpreadsheetNotFound:
         st.error("❌ Não foi possível encontrar a planilha de empréstimos no Google Sheets. Verifique o ID e as permissões.")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao carregar a planilha de empréstimos: {e}")
         return pd.DataFrame()
 
 def atualizar_status_livros(df_livros, df_emprestimos):
@@ -54,6 +61,10 @@ def atualizar_status_livros(df_livros, df_emprestimos):
 
 def registrar_emprestimo(nome_usuario, codigo_livro):
     df_livros = carregar_livros()
+    if df_livros.empty:
+        st.error("❌ Não foi possível carregar o catálogo de livros.")
+        return
+
     df_livros['codigo_upper'] = df_livros['codigo'].str.upper()
 
     codigo_livro_upper = codigo_livro.strip().upper()
@@ -106,7 +117,7 @@ def registrar_devolucao(codigo_livro):
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     sheet = planilha.sheet1
     for idx in idxs:
-        cell_row = idx + 2  # porque o Google Sheets começa no 1 e linha 1 é header
+        cell_row = idx + 2  # cabeçalho na linha 1
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
@@ -115,10 +126,12 @@ def autenticar_usuario():
         st.subheader("🔐 Login")
         user = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
+        entrar = st.button("Entrar")
+
+        if entrar:
             if user == st.secrets["admin_login"]["usuario"] and senha == st.secrets["admin_login"]["senha"]:
                 st.session_state["autenticado"] = True
-                st.experimental_rerun()
+                st.success("Login efetuado com sucesso!")
             else:
                 st.error("Usuário ou senha inválidos.")
 
@@ -148,7 +161,7 @@ if aba == "🔎 Buscar Livros":
         st.dataframe(df_livros[["Título do Livro", "Autor", "codigo", "Status"]])
 
 elif aba == "👩‍💼 Administrador":
-    if not st.session_state["autenticado"]:
+    if not st.session_state.get("autenticado", False):
         autenticar_usuario()
     else:
         st.success("✅ Acesso de administrador concedido.")
