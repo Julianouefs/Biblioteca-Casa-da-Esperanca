@@ -18,7 +18,6 @@ def remover_acentos(txt):
 
 def carregar_livros():
     df = pd.read_excel("planilha_biblioteca.xlsx")
-    # Ajustar nomes de colunas para tirar espaços e padronizar
     df.columns = [col.strip() for col in df.columns]
     return df
 
@@ -76,7 +75,7 @@ def registrar_emprestimo(nome_usuario, codigo_livro):
         (df_emprestimos['Código do Livro'].str.upper() == codigo_livro_upper) &
         (df_emprestimos['Data de Devolução'] == '')
     ]
-    
+
     if len(emprestados) >= total_exemplares:
         st.warning("⚠️ Todos os exemplares estão emprestados.")
         return
@@ -107,7 +106,7 @@ def registrar_devolucao(codigo_livro):
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     sheet = planilha.sheet1
     for idx in idxs:
-        cell_row = idx + 2
+        cell_row = idx + 2  # porque o Google Sheets começa no 1 e linha 1 é header
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
