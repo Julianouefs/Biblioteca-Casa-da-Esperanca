@@ -6,21 +6,19 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
-ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
+ID_PLANILHA_EMPRESTIMOS = "COLOQUE_AQUI_O_ID_REAL_DA_PLANILHA_EMPRESTIMOS"
 
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
-# Credenciais da conta de serviço (JSON no st.secrets)
 credentials = Credentials.from_service_account_info(st.secrets["google_service_account"], scopes=SCOPE)
 gc = gspread.authorize(credentials)
 
-# === FUNÇÕES AUXILIARES ===
 def remover_acentos(txt):
     return unidecode(str(txt)).lower()
 
 def carregar_livros():
     df = pd.read_excel("planilha_biblioteca.xlsx")
-    # Se quiser, aqui pode padronizar nomes de colunas
+    # Ajustar nomes de colunas para tirar espaços e padronizar
     df.columns = [col.strip() for col in df.columns]
     return df
 
@@ -31,45 +29,43 @@ def carregar_emprestimos():
         return pd.DataFrame(dados)
     except gspread.exceptions.SpreadsheetNotFound:
         st.error("❌ Não foi possível encontrar a planilha de empréstimos no Google Sheets. Verifique o ID e as permissões.")
-        return pd.DataFrame()  # Evita erro posterior
+        return pd.DataFrame()
 
 def atualizar_status_livros(df_livros, df_emprestimos):
     if df_emprestimos.empty:
-        if 'Quantidade' in df_livros.columns:
-            df_livros['Status'] = df_livros['Quantidade'].astype(str) + '/' + df_livros['Quantidade'].astype(str) + ' disponíveis'
+        if 'quantidade' in df_livros.columns:
+            df_livros['Status'] = df_livros['quantidade'].astype(str) + '/' + df_livros['quantidade'].astype(str) + ' disponíveis'
         else:
             df_livros['Status'] = "Quantidade não definida"
         return df_livros
 
-    # Filtra empréstimos sem data de devolução
     df_emprestimos = df_emprestimos[df_emprestimos['Data de Devolução'] == '']
     status = df_emprestimos['Código do Livro'].value_counts()
 
     def status_livro(cod):
-        # Protege caso coluna 'Quantidade' não exista
-        if cod in df_livros['Código'].values:
-            total = df_livros.loc[df_livros['Código'] == cod, 'Quantidade'].values[0]
+        if cod in df_livros['codigo'].values:
+            total = df_livros.loc[df_livros['codigo'] == cod, 'quantidade'].values[0]
             emprestados = status.get(cod, 0)
             return f"{total - emprestados}/{total} disponíveis"
         else:
             return "Código não encontrado"
 
-    df_livros['Status'] = df_livros['Código'].apply(status_livro)
+    df_livros['Status'] = df_livros['codigo'].apply(status_livro)
     return df_livros
 
 def registrar_emprestimo(nome_usuario, codigo_livro):
     df_livros = carregar_livros()
-    df_livros['Código_upper'] = df_livros['Código'].str.upper()
+    df_livros['codigo_upper'] = df_livros['codigo'].str.upper()
 
     codigo_livro_upper = codigo_livro.strip().upper()
 
-    if codigo_livro_upper not in df_livros['Código_upper'].values:
+    if codigo_livro_upper not in df_livros['codigo_upper'].values:
         st.error("❌ Código de livro não encontrado no catálogo.")
         return
 
-    livro_info = df_livros[df_livros['Código_upper'] == codigo_livro_upper].iloc[0]
-    codigo_real = livro_info['Código']
-    total_exemplares = int(livro_info['Quantidade'])
+    livro_info = df_livros[df_livros['codigo_upper'] == codigo_livro_upper].iloc[0]
+    codigo_real = livro_info['codigo']
+    total_exemplares = int(livro_info['quantidade'])
 
     df_emprestimos = carregar_emprestimos()
     if df_emprestimos.empty:
@@ -98,9 +94,9 @@ def registrar_devolucao(codigo_livro):
         return
 
     codigo_livro_upper = codigo_livro.strip().upper()
-    df_emprestimos['Código_upper'] = df_emprestimos['Código do Livro'].str.upper()
+    df_emprestimos['codigo_upper'] = df_emprestimos['Código do Livro'].str.upper()
     idxs = df_emprestimos[
-        (df_emprestimos['Código_upper'] == codigo_livro_upper) &
+        (df_emprestimos['codigo_upper'] == codigo_livro_upper) &
         (df_emprestimos['Data de Devolução'] == '')
     ].index
 
@@ -115,7 +111,6 @@ def registrar_devolucao(codigo_livro):
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
-# === LOGIN ===
 def autenticar_usuario():
     with st.sidebar:
         st.subheader("🔐 Login")
@@ -128,7 +123,6 @@ def autenticar_usuario():
             else:
                 st.error("Usuário ou senha inválidos.")
 
-# === INTERFACE ===
 st.set_page_config(page_title="📖 Biblioteca Comunitária", layout="centered")
 
 if "autenticado" not in st.session_state:
@@ -150,9 +144,9 @@ if aba == "🔎 Buscar Livros":
         filtro = df_livros.apply(lambda row: termo_proc in remover_acentos(" ".join(map(str, row))), axis=1)
         resultados = df_livros[filtro]
         st.write(f"🔍 {len(resultados)} resultado(s) encontrado(s):")
-        st.dataframe(resultados[["Título", "Autor", "Código", "Status"]])
+        st.dataframe(resultados[["Título do Livro", "Autor", "codigo", "Status"]])
     else:
-        st.dataframe(df_livros[["Título", "Autor", "Código", "Status"]])
+        st.dataframe(df_livros[["Título do Livro", "Autor", "codigo", "Status"]])
 
 elif aba == "👩‍💼 Administrador":
     if not st.session_state["autenticado"]:
