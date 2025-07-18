@@ -1,137 +1,122 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2.service_account import Credentials
+from google.oauth2 import service_account
 from datetime import datetime
 
-# ------------------ CONFIGURAÇÕES ------------------
+# ----------------------
+# Autenticação com Google Sheets (uso no Streamlit Cloud)
+# ----------------------
+try:
+    creds_dict = st.secrets["gcp_service_account"]
+    creds = service_account.Credentials.from_service_account_info(creds_dict)
+    client = gspread.authorize(creds)
+except Exception as e:
+    st.error("Erro ao autenticar com o Google Sheets.")
+    st.stop()
 
+# ----------------------
 # IDs das planilhas
-ID_PLANILHA_LIVROS = "COLE AQUI O ID DA PLANILHA DE LIVROS"
-ID_PLANILHA_EMPRESTIMOS = "COLE AQUI O ID DA PLANILHA DE EMPRÉSTIMOS"
+# ----------------------
+ID_PLANILHA_LIVROS = st.secrets["id_planilha_livros"]
+ID_PLANILHA_EMPRESTIMOS = st.secrets["id_planilha_emprestimos"]
 
-# Escopos para acesso ao Google Sheets
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
-# Autenticando com credenciais
-@st.cache_resource
-
-def conectar_gspread():
-    try:
-        creds = Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"], scopes=SCOPES
-        )
-        client = gspread.authorize(creds)
-        return client
-    except Exception as e:
-        st.error("Erro ao autenticar com o Google Sheets.")
-        st.stop()
-
-# ------------------ CARREGAMENTO DOS DADOS ------------------
-
-@st.cache_data(ttl=300)
+# ----------------------
+# Carregamento de dados
+# ----------------------
 def carregar_livros():
     try:
-        sh = conectar_gspread().open_by_key(ID_PLANILHA_LIVROS)
-        worksheet = sh.sheet1
-        dados = worksheet.get_all_records()
-        return pd.DataFrame(dados)
-    except:
-        st.error("❌ Não foi possível carregar a lista de livros.")
+        sheet = client.open_by_key(ID_PLANILHA_LIVROS).sheet1
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception:
+        st.error("\u274c Não foi possível carregar o catálogo de livros.")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
 def carregar_emprestimos():
     try:
-        sh = conectar_gspread().open_by_key(ID_PLANILHA_EMPRESTIMOS)
-        worksheet = sh.sheet1
-        dados = worksheet.get_all_records()
-        return pd.DataFrame(dados)
-    except:
-        st.error("❌ Não foi possível carregar a lista de empréstimos. Tente novamente mais tarde.")
+        sheet = client.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception:
+        st.error("\u274c Não foi possível carregar a lista de empréstimos. Tente novamente mais tarde.")
         return pd.DataFrame()
 
-# ------------------ INTERFACE DO USUÁRIO ------------------
-
-def pagina_principal():
-    st.title("📚 Biblioteca Casa da Esperança")
-    st.write("Busque um livro ou registre um empréstimo")
-
-    df_livros = carregar_livros()
-
-    if df_livros.empty:
-        st.warning("Nenhum livro encontrado.")
-        return
-
-    termo_busca = st.text_input("Buscar por título, autor ou código")
-    if termo_busca:
-        termo_busca = termo_busca.strip().lower()
-        df_livros = df_livros[df_livros.apply(lambda row: termo_busca in str(row.values).lower(), axis=1)]
-
-    if not df_livros.empty:
-        st.dataframe(df_livros["Título Autor Código Status".split()])
-    else:
-        st.info("Nenhum livro encontrado com esse critério.")
-
-# ------------------ LOGIN DO ADMINISTRADOR ------------------
-
+# ----------------------
+# Tela de autenticação
+# ----------------------
 def autenticar_usuario():
-    if "autenticado" not in st.session_state:
-        st.session_state.autenticado = False
+    with st.form("login_form"):
+        user = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+        submit = st.form_submit_button("Entrar")
 
-    if st.session_state.autenticado:
-        exibir_area_admin()
+    if submit:
+        if user == st.secrets["admin_login"]["usuario"] and senha == st.secrets["admin_login"]["senha"]:
+            st.session_state["autenticado"] = True
+            st.experimental_rerun()
+        else:
+            st.error("Usuário ou senha incorretos.")
+
+# ----------------------
+# Registrar empréstimo
+# ----------------------
+def registrar_emprestimo():
+    st.subheader("Registrar Empréstimo")
+    df_livros = carregar_livros()
+    if df_livros.empty:
         return
 
-    st.subheader("🔐 Login do administrador")
-    user = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
+    with st.form("form_emprestimo"):
+        codigo = st.text_input("Código do Livro").strip()
+        nome_pessoa = st.text_input("Nome da Pessoa").strip()
+        data_emprestimo = st.date_input("Data do Empréstimo", value=datetime.today())
+        submit = st.form_submit_button("Registrar")
 
-    if st.button("Entrar"):
-        if (
-            user == st.secrets["admin_login"]["usuario"]
-            and senha == st.secrets["admin_login"]["senha"]
-        ):
-            st.session_state.autenticado = True
-            st.success("✅ Login realizado com sucesso!")
-        else:
-            st.error("❌ Usuário ou senha inválidos.")
+    if submit:
+        df_livros["codigo_lower"] = df_livros["codigo"].str.lower()
+        livro = df_livros[df_livros["codigo_lower"] == codigo.lower()]
 
-# ------------------ ÁREA ADMIN ------------------
-
-def exibir_area_admin():
-    st.header("🔧 Painel do Administrador")
-    aba = st.radio("Escolha a opção:", ["Ver empréstimos", "Registrar novo empréstimo"])
-
-    if aba == "Ver empréstimos":
-        df = carregar_emprestimos()
-        if not df.empty:
-            st.dataframe(df)
-        else:
-            st.warning("Nenhum empréstimo registrado.")
-
-    elif aba == "Registrar novo empréstimo":
-        st.subheader("📥 Registrar empréstimo")
-        nome = st.text_input("Nome do leitor")
-        codigo_livro = st.text_input("Código do livro")
-
-        if st.button("Registrar"):
-            if nome and codigo_livro:
+        if not livro.empty:
+            quantidade = int(livro.iloc[0]["quantidade"])
+            if quantidade > 0:
                 try:
-                    sh = conectar_gspread().open_by_key(ID_PLANILHA_EMPRESTIMOS)
-                    worksheet = sh.sheet1
-                    data = datetime.now().strftime("%d/%m/%Y")
-                    worksheet.append_row([nome, codigo_livro, data])
-                    st.success("✅ Empréstimo registrado com sucesso!")
+                    sheet = client.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+                    sheet.append_row([codigo, nome_pessoa, data_emprestimo.strftime("%d/%m/%Y"), "emprestado"])
+                    st.success("Empréstimo registrado com sucesso.")
                 except:
                     st.error("Erro ao registrar o empréstimo.")
             else:
-                st.warning("Preencha todos os campos.")
+                st.warning("Não há exemplares disponíveis para este livro.")
+        else:
+            st.warning("Livro não encontrado.")
 
-# ------------------ EXECUÇÃO ------------------
+# ----------------------
+# Consultar empréstimos
+# ----------------------
+def consultar_emprestimos():
+    st.subheader("Livros Emprestados")
+    df = carregar_emprestimos()
+    if not df.empty:
+        st.dataframe(df)
 
-menu = st.sidebar.selectbox("Menu", ["Início", "Admin"])
-if menu == "Início":
-    pagina_principal()
-else:
+# ----------------------
+# Início do app
+# ----------------------
+st.title("🏛️ Biblioteca Casa da Esperança")
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+if not st.session_state["autenticado"]:
     autenticar_usuario()
+else:
+    menu = st.sidebar.radio("Menu", ["Registrar Empréstimo", "Consultar Empréstimos", "Sair"])
+
+    if menu == "Registrar Empréstimo":
+        registrar_emprestimo()
+    elif menu == "Consultar Empréstimos":
+        consultar_emprestimos()
+    elif menu == "Sair":
+        st.session_state["autenticado"] = False
+        st.experimental_rerun()
