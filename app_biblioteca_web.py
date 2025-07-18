@@ -6,52 +6,53 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
+ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 
-# ID da planilha Google Sheets que guarda os empréstimos.
-# Substitua pelo ID real da sua planilha no Google Sheets.
-ID_PLANILHA_EMPRESTIMOS = "COLOQUE_AQUI_O_ID_REAL_DA_PLANILHA_EMPRESTIMOS"
-
-# Escopos de acesso para a API Google Sheets e Drive
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
-# Carregamento das credenciais da conta de serviço armazenadas no st.secrets
+# Credenciais da conta de serviço (JSON no st.secrets)
 credentials = Credentials.from_service_account_info(st.secrets["google_service_account"], scopes=SCOPE)
 gc = gspread.authorize(credentials)
 
 # === FUNÇÕES AUXILIARES ===
-
 def remover_acentos(txt):
     return unidecode(str(txt)).lower()
 
-# Carregar catálogo dos livros do arquivo Excel local
 def carregar_livros():
-    # O arquivo planilha_biblioteca.xlsx deve estar no mesmo diretório do app
-    return pd.read_excel("planilha_biblioteca.xlsx")
+    df = pd.read_excel("planilha_biblioteca.xlsx")
+    # Se quiser, aqui pode padronizar nomes de colunas
+    df.columns = [col.strip() for col in df.columns]
+    return df
 
-# Carregar empréstimos da planilha Google Sheets
 def carregar_emprestimos():
     try:
         planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
         dados = planilha.sheet1.get_all_records()
         return pd.DataFrame(dados)
     except gspread.exceptions.SpreadsheetNotFound:
-        st.error("❌ Não foi possível encontrar a planilha de empréstimos no Google Sheets. "
-                 "Verifique se o ID está correto e se a conta de serviço tem acesso.")
-        return pd.DataFrame()  # Retorna DataFrame vazio para evitar que o app quebre
+        st.error("❌ Não foi possível encontrar a planilha de empréstimos no Google Sheets. Verifique o ID e as permissões.")
+        return pd.DataFrame()  # Evita erro posterior
 
 def atualizar_status_livros(df_livros, df_emprestimos):
     if df_emprestimos.empty:
-        # Se não carregou empréstimos, mostra tudo disponível
-        df_livros['Status'] = df_livros['Quantidade'].astype(str) + '/' + df_livros['Quantidade'].astype(str) + ' disponíveis'
+        if 'Quantidade' in df_livros.columns:
+            df_livros['Status'] = df_livros['Quantidade'].astype(str) + '/' + df_livros['Quantidade'].astype(str) + ' disponíveis'
+        else:
+            df_livros['Status'] = "Quantidade não definida"
         return df_livros
 
+    # Filtra empréstimos sem data de devolução
     df_emprestimos = df_emprestimos[df_emprestimos['Data de Devolução'] == '']
     status = df_emprestimos['Código do Livro'].value_counts()
 
     def status_livro(cod):
-        total = df_livros[df_livros['Código'] == cod]['Quantidade'].values[0]
-        emprestados = status.get(cod, 0)
-        return f"{total - emprestados}/{total} disponíveis"
+        # Protege caso coluna 'Quantidade' não exista
+        if cod in df_livros['Código'].values:
+            total = df_livros.loc[df_livros['Código'] == cod, 'Quantidade'].values[0]
+            emprestados = status.get(cod, 0)
+            return f"{total - emprestados}/{total} disponíveis"
+        else:
+            return "Código não encontrado"
 
     df_livros['Status'] = df_livros['Código'].apply(status_livro)
     return df_livros
@@ -72,7 +73,6 @@ def registrar_emprestimo(nome_usuario, codigo_livro):
 
     df_emprestimos = carregar_emprestimos()
     if df_emprestimos.empty:
-        # Se não conseguiu carregar empréstimos, avisa e não registra
         st.error("❌ Não foi possível carregar a lista de empréstimos. Tente novamente mais tarde.")
         return
 
@@ -111,7 +111,7 @@ def registrar_devolucao(codigo_livro):
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     sheet = planilha.sheet1
     for idx in idxs:
-        cell_row = idx + 2  # Pular o cabeçalho da planilha
+        cell_row = idx + 2
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
@@ -138,7 +138,6 @@ st.title("📚 Biblioteca Casa da Esperança")
 
 aba = st.sidebar.radio("Navegar", ["🔎 Buscar Livros", "👩‍💼 Administrador"])
 
-# === ABA BUSCA ===
 if aba == "🔎 Buscar Livros":
     df_livros = carregar_livros()
     df_emprestimos = carregar_emprestimos()
@@ -155,7 +154,6 @@ if aba == "🔎 Buscar Livros":
     else:
         st.dataframe(df_livros[["Título", "Autor", "Código", "Status"]])
 
-# === ABA ADMIN ===
 elif aba == "👩‍💼 Administrador":
     if not st.session_state["autenticado"]:
         autenticar_usuario()
