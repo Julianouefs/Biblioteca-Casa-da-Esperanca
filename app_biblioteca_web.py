@@ -26,7 +26,6 @@ ID_PLANILHA_EMPRESTIMOS = st.secrets["google"]["planilha_emprestimos_id"]
 if 'modo_admin' not in st.session_state:
     st.session_state.modo_admin = False
 
-# Expiração de sessão após 30 minutos
 if st.session_state.get('login_time'):
     if datetime.now() - st.session_state.login_time > timedelta(minutes=30):
         st.session_state.modo_admin = False
@@ -40,6 +39,31 @@ df = None
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
+
+        # 🔄 Verifica situação atual com base nos empréstimos
+        try:
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+                st.secrets["google_service_account"], scope
+            )
+            gc = gspread.authorize(credentials)
+            worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+            dados_emprestimos = worksheet.get_all_records()
+
+            codigos_emprestados = {
+                linha["Código do livro"].strip().lower()
+                for linha in dados_emprestimos
+                if linha.get("Situação", "").lower() == "emprestado"
+                and not linha.get("Data de devolução")
+            }
+
+            df["Situação"] = df["codigo"].astype(str).str.strip().str.lower().apply(
+                lambda cod: "Emprestado" if cod in codigos_emprestados else "Disponível"
+            )
+
+        except Exception as e:
+            st.error(f"Erro ao verificar situação dos livros: {e}")
+
     except:
         st.error("Erro ao ler a planilha salva.")
 else:
@@ -90,7 +114,6 @@ with st.expander("🔐 Administrador"):
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
-        # ✅ Área visível só para admin
         st.subheader("🛠️ Upload de nova planilha")
         arquivo_novo = st.file_uploader("Carregar planilha .xlsx", type=["xlsx"])
         if arquivo_novo:
@@ -105,7 +128,6 @@ with st.expander("🔐 Administrador"):
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
-        # 📤 Botão de download
         st.subheader("📤 Baixar planilha atual")
         if df is not None:
             buffer = io.BytesIO()
@@ -124,17 +146,8 @@ with st.expander("🔐 Administrador"):
         # 📘 Registro de Empréstimos
         st.subheader("📘 Registro de Empréstimos")
 
-        # Conecta ao Google Sheets
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
-        gc = gspread.authorize(credentials)
-        worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
-
-        # Validação
         def validar_codigo(codigo):
-            # Permite letras (com ou sem acento), números, espaços e os símbolos - / . _
             return re.match(r"^[\w\sÁ-ÿçÇ\-/_.]+$", codigo.strip(), re.UNICODE) is not None
-
 
         with st.form("form_emprestimo"):
             nome_pessoa = st.text_input("Nome da pessoa")
@@ -162,8 +175,11 @@ with st.expander("🔐 Administrador"):
                             codigo_livro.strip(),
                             nome_livro,
                             str(data_emprestimo),
-                            "",  # data_devolucao
+                            "",  # Data de devolução
                             "Emprestado"
                         ]
-                        worksheet.append_row(nova_linha)
-                        st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                        try:
+                            worksheet.append_row(nova_linha)
+                            st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                        except Exception as e:
+                            st.error(f"Erro ao registrar o empréstimo: {e}")
