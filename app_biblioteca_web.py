@@ -8,19 +8,16 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
-
 st.title("📚 Biblioteca Casa da Esperança")
 
-# 🔐 Configurações do admin
+# Configurações do admin
 LOGIN_CORRETO = st.secrets["login"]
 SENHA_CORRETA = st.secrets["senha"]
-
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 
 if 'modo_admin' not in st.session_state:
     st.session_state.modo_admin = False
 
-# Remove acentos
 def remover_acentos(texto):
     if isinstance(texto, str):
         return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn').lower()
@@ -33,34 +30,38 @@ gc = gspread.authorize(credentials)
 ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
-# Dados de empréstimos
-dados_emprestimos = worksheet.get_all_records()
-contagem_emprestimos = {}
-for linha in dados_emprestimos:
-    if linha["status"] == "Emprestado":
-        codigo = linha["codigo_livro"]
-        contagem_emprestimos[codigo] = contagem_emprestimos.get(codigo, 0) + 1
+def obter_codigos_emprestados():
+    try:
+        dados = worksheet.get_all_records()
+        contagem = {}
+        for linha in dados:
+            if linha["status"] == "Emprestado":
+                cod = linha["codigo_livro"]
+                contagem[cod] = contagem.get(cod, 0) + 1
+        return contagem
+    except:
+        return {}
+
+codigos_emprestados = obter_codigos_emprestados()
 
 # Carrega planilha local
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
-
         if "codigo" in df.columns and "quantidade" in df.columns:
-            def calcular_status(row):
-                cod = str(row["codigo"]).strip()
-                total = int(row.get("quantidade", 1))
-                emprestados = contagem_emprestimos.get(cod, 0)
-                disponiveis = max(0, total - emprestados)
-                return f"{disponiveis}/{total} disponíveis"
-            df["status"] = df.apply(calcular_status, axis=1)
-    except Exception as e:
-        st.error(f"Erro ao ler a planilha salva: {e}")
+            df["codigo"] = df["codigo"].astype(str)
+            df["status"] = df.apply(lambda row: f"{row['quantidade'] - codigos_emprestados.get(str(row['codigo']), 0)}/{row['quantidade']} Disponível", axis=1)
+        else:
+            st.error("A planilha deve conter as colunas 'codigo', 'Título do Livro', 'Autor', e 'quantidade'")
+            df = None
+    except:
+        df = None
+        st.error("Erro ao ler a planilha local.")
 else:
     df = None
-    st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
+    st.warning("Nenhuma planilha local encontrada.")
 
-# Pesquisa
+# Tela pública de busca
 if df is not None:
     st.subheader("🔍 Pesquisa de Livros")
     coluna_busca = st.selectbox("Buscar por:", ["Título do Livro", "Autor", "codigo"])
@@ -81,6 +82,7 @@ st.divider()
 with st.expander("🔐 Administrador"):
     if not st.session_state.modo_admin:
         with st.form("login_form"):
+            st.write("Área restrita para administradores.")
             usuario = st.text_input("Usuário")
             senha = st.text_input("Senha", type="password")
             entrar = st.form_submit_button("Entrar")
@@ -97,8 +99,8 @@ with st.expander("🔐 Administrador"):
         if arquivo_novo:
             try:
                 df_novo = pd.read_excel(arquivo_novo)
-                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor"]):
-                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro' e 'Autor'")
+                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor", "quantidade"]):
+                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro', 'Autor', 'quantidade'")
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
@@ -111,13 +113,9 @@ with st.expander("🔐 Administrador"):
             buffer = io.BytesIO()
             df.to_excel(buffer, index=False, engine='openpyxl')
             buffer.seek(0)
-            st.download_button(
-                label="📅 Baixar planilha",
-                data=buffer,
-                file_name="planilha_biblioteca_backup.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button("📥 Baixar planilha", data=buffer, file_name="planilha_biblioteca_backup.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+        # Registro de Empréstimos
         st.subheader("📘 Registro de Empréstimos")
         with st.form("form_emprestimo"):
             nome_pessoa = st.text_input("Nome da pessoa")
@@ -128,28 +126,39 @@ with st.expander("🔐 Administrador"):
             if enviar:
                 nome_livro = ""
                 if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
-                    match = df[df["codigo"].astype(str).str.strip() == codigo_livro.strip()]
+                    match = df[df["codigo"].astype(str) == codigo_livro.strip()]
                     if not match.empty:
                         nome_livro = match.iloc[0]["Título do Livro"]
-                if nome_livro == "":
-                    st.warning("Código de livro não encontrado na planilha principal.")
-                elif not nome_pessoa.strip():
-                    st.warning("Informe o nome da pessoa.")
-                else:
-                    nova_linha = [
-                        nome_pessoa.strip(),
-                        codigo_livro.strip(),
-                        nome_livro,
-                        str(data_emprestimo),
-                        "",
-                        "Emprestado"
-                    ]
-                    worksheet.append_row(nova_linha)
-                    st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                    st.rerun()
+                        quantidade_total = int(match.iloc[0]["quantidade"])
 
+                        emprestimos_ativos = sum(
+                            1 for linha in worksheet.get_all_records()
+                            if linha["codigo_livro"] == codigo_livro.strip() and linha["status"] == "Emprestado"
+                        )
+
+                        if emprestimos_ativos >= quantidade_total:
+                            st.warning(f"❌ Todos os exemplares de '{nome_livro}' já estão emprestados.")
+                        elif not nome_pessoa.strip():
+                            st.warning("Informe o nome da pessoa.")
+                        else:
+                            nova_linha = [
+                                nome_pessoa.strip(),
+                                codigo_livro.strip(),
+                                nome_livro,
+                                str(data_emprestimo),
+                                "",
+                                "Emprestado"
+                            ]
+                            worksheet.append_row(nova_linha)
+                            st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                            st.rerun()
+                    else:
+                        st.warning("Código de livro não encontrado na planilha principal.")
+
+        # Baixa de Devolução
         st.subheader("📅 Baixa de Devolução")
-        emprestimos_abertos = [linha for linha in dados_emprestimos if linha["status"] == "Emprestado"]
+        dados = worksheet.get_all_records()
+        emprestimos_abertos = [linha for linha in dados if linha["status"] == "Emprestado"]
 
         if emprestimos_abertos:
             opcoes = [f"{linha['codigo_livro']} - {linha['nome_livro']} ({linha['nome_pessoa']})" for linha in emprestimos_abertos]
