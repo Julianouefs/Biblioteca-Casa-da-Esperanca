@@ -6,10 +6,10 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
-ID_PLANILHA_LIVROS = "ID_DA_PLANILHA_LIVROS"
+# Agora só o ID da planilha dos empréstimos, porque o catálogo é Excel local
 ID_PLANILHA_EMPRESTIMOS = "ID_DA_PLANILHA_EMPRESTIMOS"
 
-# Substitua isso pelo seu JSON de credenciais, mantido seguro.
+# Configuração das credenciais para Google Sheets (empréstimos)
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 credentials = Credentials.from_service_account_info(st.secrets["google_service_account"], scopes=SCOPE)
 gc = gspread.authorize(credentials)
@@ -18,11 +18,11 @@ gc = gspread.authorize(credentials)
 def remover_acentos(txt):
     return unidecode(str(txt)).lower()
 
+# Função para carregar catálogo dos livros do Excel local
 def carregar_livros():
-    planilha = gc.open_by_key(ID_PLANILHA_LIVROS)
-    dados = planilha.sheet1.get_all_records()
-    return pd.DataFrame(dados)
+    return pd.read_excel("planilha_biblioteca.xlsx")
 
+# Função para carregar empréstimos do Google Sheets
 def carregar_emprestimos():
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     dados = planilha.sheet1.get_all_records()
@@ -47,7 +47,7 @@ def registrar_emprestimo(nome_usuario, codigo_livro):
     codigo_livro_upper = codigo_livro.strip().upper()
 
     if codigo_livro_upper not in df_livros['Código_upper'].values:
-        st.error("❌ Código de livro não encontrado na planilha principal.")
+        st.error("❌ Código de livro não encontrado no catálogo.")
         return
 
     livro_info = df_livros[df_livros['Código_upper'] == codigo_livro_upper].iloc[0]
@@ -87,7 +87,7 @@ def registrar_devolucao(codigo_livro):
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     sheet = planilha.sheet1
     for idx in idxs:
-        cell_row = idx + 2  # Pular cabeçalho
+        cell_row = idx + 2  # pular o cabeçalho
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
