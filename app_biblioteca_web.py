@@ -6,29 +6,45 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
-# Agora só o ID da planilha dos empréstimos, porque o catálogo é Excel local
-ID_PLANILHA_EMPRESTIMOS = "ID_DA_PLANILHA_EMPRESTIMOS"
 
-# Configuração das credenciais para Google Sheets (empréstimos)
+# ID da planilha Google Sheets que guarda os empréstimos.
+# Substitua pelo ID real da sua planilha no Google Sheets.
+ID_PLANILHA_EMPRESTIMOS = "COLOQUE_AQUI_O_ID_REAL_DA_PLANILHA_EMPRESTIMOS"
+
+# Escopos de acesso para a API Google Sheets e Drive
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
+# Carregamento das credenciais da conta de serviço armazenadas no st.secrets
 credentials = Credentials.from_service_account_info(st.secrets["google_service_account"], scopes=SCOPE)
 gc = gspread.authorize(credentials)
 
 # === FUNÇÕES AUXILIARES ===
+
 def remover_acentos(txt):
     return unidecode(str(txt)).lower()
 
-# Função para carregar catálogo dos livros do Excel local
+# Carregar catálogo dos livros do arquivo Excel local
 def carregar_livros():
+    # O arquivo planilha_biblioteca.xlsx deve estar no mesmo diretório do app
     return pd.read_excel("planilha_biblioteca.xlsx")
 
-# Função para carregar empréstimos do Google Sheets
+# Carregar empréstimos da planilha Google Sheets
 def carregar_emprestimos():
-    planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
-    dados = planilha.sheet1.get_all_records()
-    return pd.DataFrame(dados)
+    try:
+        planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
+        dados = planilha.sheet1.get_all_records()
+        return pd.DataFrame(dados)
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("❌ Não foi possível encontrar a planilha de empréstimos no Google Sheets. "
+                 "Verifique se o ID está correto e se a conta de serviço tem acesso.")
+        return pd.DataFrame()  # Retorna DataFrame vazio para evitar que o app quebre
 
 def atualizar_status_livros(df_livros, df_emprestimos):
+    if df_emprestimos.empty:
+        # Se não carregou empréstimos, mostra tudo disponível
+        df_livros['Status'] = df_livros['Quantidade'].astype(str) + '/' + df_livros['Quantidade'].astype(str) + ' disponíveis'
+        return df_livros
+
     df_emprestimos = df_emprestimos[df_emprestimos['Data de Devolução'] == '']
     status = df_emprestimos['Código do Livro'].value_counts()
 
@@ -55,6 +71,11 @@ def registrar_emprestimo(nome_usuario, codigo_livro):
     total_exemplares = int(livro_info['Quantidade'])
 
     df_emprestimos = carregar_emprestimos()
+    if df_emprestimos.empty:
+        # Se não conseguiu carregar empréstimos, avisa e não registra
+        st.error("❌ Não foi possível carregar a lista de empréstimos. Tente novamente mais tarde.")
+        return
+
     emprestados = df_emprestimos[
         (df_emprestimos['Código do Livro'].str.upper() == codigo_livro_upper) &
         (df_emprestimos['Data de Devolução'] == '')
@@ -72,8 +93,11 @@ def registrar_emprestimo(nome_usuario, codigo_livro):
 
 def registrar_devolucao(codigo_livro):
     df_emprestimos = carregar_emprestimos()
-    codigo_livro_upper = codigo_livro.strip().upper()
+    if df_emprestimos.empty:
+        st.error("❌ Não foi possível carregar a lista de empréstimos. Tente novamente mais tarde.")
+        return
 
+    codigo_livro_upper = codigo_livro.strip().upper()
     df_emprestimos['Código_upper'] = df_emprestimos['Código do Livro'].str.upper()
     idxs = df_emprestimos[
         (df_emprestimos['Código_upper'] == codigo_livro_upper) &
@@ -87,7 +111,7 @@ def registrar_devolucao(codigo_livro):
     planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
     sheet = planilha.sheet1
     for idx in idxs:
-        cell_row = idx + 2  # pular o cabeçalho
+        cell_row = idx + 2  # Pular o cabeçalho da planilha
         sheet.update_cell(cell_row, 4, datetime.now().strftime("%d/%m/%Y"))
     st.success("📚 Devolução registrada com sucesso!")
 
