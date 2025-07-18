@@ -6,65 +6,67 @@ import gspread
 import io
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date
-from collections import Counter
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
 
 st.title("📚 Biblioteca Casa da Esperança")
 
+# 🔐 Configurações do admin
 LOGIN_CORRETO = st.secrets["login"]
 SENHA_CORRETA = st.secrets["senha"]
+
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 
 if 'modo_admin' not in st.session_state:
     st.session_state.modo_admin = False
 
+# Remove acentos
 def remover_acentos(texto):
     if isinstance(texto, str):
         return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn').lower()
     return texto
 
-# Conexão com Google Sheets
+# Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_service_account"], scope)
 gc = gspread.authorize(credentials)
 ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
 
-def obter_status_livros(planilha_livros):
-    try:
-        emprestimos = worksheet.get_all_records()
-        total_por_codigo = Counter(l["codigo"] for l in planilha_livros)
-        emprestados = Counter(e["codigo_livro"] for e in emprestimos if e["status"] == "Emprestado")
-        status = {}
-        for cod in total_por_codigo:
-            disp = total_por_codigo[cod] - emprestados.get(cod, 0)
-            status[cod] = f"{disp}/{total_por_codigo[cod]} disponíveis"
-        return status
-    except:
-        return {}
+# Dados de empréstimos
+dados_emprestimos = worksheet.get_all_records()
+contagem_emprestimos = {}
+for linha in dados_emprestimos:
+    if linha["status"] == "Emprestado":
+        codigo = linha["codigo_livro"]
+        contagem_emprestimos[codigo] = contagem_emprestimos.get(codigo, 0) + 1
 
 # Carrega planilha local
-df = None
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
-        status_map = obter_status_livros(df.to_dict(orient="records"))
-        df["status"] = df["codigo"].astype(str).map(status_map)
-    except:
-        st.error("Erro ao ler a planilha salva.")
+
+        if "codigo" in df.columns and "quantidade" in df.columns:
+            def calcular_status(row):
+                cod = str(row["codigo"]).strip()
+                total = int(row.get("quantidade", 1))
+                emprestados = contagem_emprestimos.get(cod, 0)
+                disponiveis = max(0, total - emprestados)
+                return f"{disponiveis}/{total} disponíveis"
+            df["status"] = df.apply(calcular_status, axis=1)
+    except Exception as e:
+        st.error(f"Erro ao ler a planilha salva: {e}")
 else:
+    df = None
     st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
 
-# Busca pública
+# Pesquisa
 if df is not None:
     st.subheader("🔍 Pesquisa de Livros")
     coluna_busca = st.selectbox("Buscar por:", ["Título do Livro", "Autor", "codigo"])
     termo = st.text_input(f"Digite o termo para buscar em '{coluna_busca}'")
 
-    if coluna_busca not in df.columns:
-        st.error(f"Coluna '{coluna_busca}' não encontrada na planilha.")
-    elif termo:
+    if termo:
         termo_normalizado = remover_acentos(termo)
         resultado = df[df[coluna_busca].astype(str).apply(remover_acentos).str.contains(termo_normalizado, na=False)]
         st.write(f"🔎 {len(resultado)} resultado(s) encontrado(s):")
@@ -82,7 +84,6 @@ with st.expander("🔐 Administrador"):
             usuario = st.text_input("Usuário")
             senha = st.text_input("Senha", type="password")
             entrar = st.form_submit_button("Entrar")
-
             if entrar:
                 if usuario == LOGIN_CORRETO and senha == SENHA_CORRETA:
                     st.success("Login realizado com sucesso.")
@@ -127,10 +128,9 @@ with st.expander("🔐 Administrador"):
             if enviar:
                 nome_livro = ""
                 if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
-                    match = df[df["codigo"].astype(str) == codigo_livro.strip()]
+                    match = df[df["codigo"].astype(str).str.strip() == codigo_livro.strip()]
                     if not match.empty:
                         nome_livro = match.iloc[0]["Título do Livro"]
-
                 if nome_livro == "":
                     st.warning("Código de livro não encontrado na planilha principal.")
                 elif not nome_pessoa.strip():
@@ -149,25 +149,25 @@ with st.expander("🔐 Administrador"):
                     st.rerun()
 
         st.subheader("📅 Baixa de Devolução")
-        dados = worksheet.get_all_records()
-        emprestimos_abertos = [l for l in dados if l["status"] == "Emprestado"]
+        emprestimos_abertos = [linha for linha in dados_emprestimos if linha["status"] == "Emprestado"]
 
         if emprestimos_abertos:
-            opcoes = [f"{l['codigo_livro']} - {l['nome_livro']} ({l['nome_pessoa']})" for l in emprestimos_abertos]
+            opcoes = [f"{linha['codigo_livro']} - {linha['nome_livro']} ({linha['nome_pessoa']})" for linha in emprestimos_abertos]
             escolha = st.selectbox("Selecione um empréstimo para dar baixa:", opcoes)
             confirmar = st.button("Confirmar Devolução")
 
             if confirmar:
                 index = opcoes.index(escolha)
-                original = emprestimos_abertos[index]
+                linha_original = emprestimos_abertos[index]
                 todas_linhas = worksheet.get_all_values()
-                for i, l in enumerate(todas_linhas):
+
+                for i, linha in enumerate(todas_linhas):
                     if i == 0:
                         continue
-                    if (l[0] == original['nome_pessoa'] and
-                        l[1] == original['codigo_livro'] and
-                        l[2] == original['nome_livro'] and
-                        l[5] == 'Emprestado'):
+                    if (linha[0] == linha_original['nome_pessoa'] and
+                        linha[1] == linha_original['codigo_livro'] and
+                        linha[2] == linha_original['nome_livro'] and
+                        linha[5] == 'Emprestado'):
                         worksheet.update_cell(i+1, 5, str(date.today()))
                         worksheet.update_cell(i+1, 6, "Devolvido")
                         st.success("📗 Devolução registrada com sucesso.")
