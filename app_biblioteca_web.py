@@ -6,7 +6,7 @@ from unidecode import unidecode
 from datetime import datetime
 
 # === CONFIGURAÇÕES ===
-ID_PLANILHA_EMPRESTIMOS = "https://docs.google.com/spreadsheets/d/1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do/edit?gid=0#gid=0"
+ID_PLANILHA_EMPRESTIMOS = "1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do"
 
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
@@ -27,7 +27,7 @@ def carregar_livros():
 
 def carregar_emprestimos():
     try:
-        planilha = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS)
+        planilha = gc.open_by_key("1FE4kZWMCxC38giYc_xHy2PZCnq0GJgFlWUVY_htZ5do")
         dados = planilha.sheet1.get_all_records()
         return pd.DataFrame(dados)
     except gspread.exceptions.SpreadsheetNotFound:
