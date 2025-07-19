@@ -116,7 +116,7 @@ with st.expander("🔐 Administrador"):
                     st.success("Login realizado com sucesso.")
                     st.session_state.modo_admin = True
                     st.session_state.login_time = datetime.now()
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
@@ -130,7 +130,7 @@ with st.expander("🔐 Administrador"):
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
-                    st.experimental_rerun()
+                    st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
@@ -187,6 +187,6 @@ with st.expander("🔐 Administrador"):
                         try:
                             worksheet.append_row(nova_linha)
                             st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                            st.experimental_rerun()
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao registrar o empréstimo: {e}")
