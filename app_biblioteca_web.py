@@ -49,7 +49,7 @@ def carregar_emprestimos():
         return [], None
 
 # =====================
-# 📄 Planilha local
+# 📄 Planilha local - lista de livros
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 df = None
 if os.path.exists(ARQUIVO_PLANILHA):
@@ -73,7 +73,7 @@ def remover_acentos(texto):
 dados_emprestimos, worksheet = carregar_emprestimos()
 
 # =====================
-# Atualizar disponibilidade no dataframe df
+# Calcular disponibilidade dinamicamente (sem salvar no Excel local)
 if df is not None and dados_emprestimos:
     codigos_emprestados = [
         linha["Código do livro"].strip().lower()
@@ -90,6 +90,7 @@ if df is not None and dados_emprestimos:
         disponivel = total - emprestado
         return f"{disponivel}/{total} disponíveis"
 
+    # Atualiza o DataFrame na memória só para exibição
     df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
 
 # =====================
@@ -125,7 +126,7 @@ with st.expander("🔐 Administrador"):
                     st.success("Login realizado com sucesso.")
                     st.session_state.modo_admin = True
                     st.session_state.login_time = datetime.now()
-                    st.rerun()
+                    st.experimental_rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
@@ -139,7 +140,7 @@ with st.expander("🔐 Administrador"):
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
-                    st.rerun()
+                    st.experimental_rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
@@ -194,9 +195,8 @@ with st.expander("🔐 Administrador"):
                         ]
                         try:
                             worksheet.append_row(nova_linha)
-                            # Atualiza dados_emprestimos e worksheet para refletir a mudança
                             st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                            st.rerun()
+                            st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Erro ao registrar o empréstimo: {e}")
 
@@ -241,7 +241,7 @@ with st.expander("🔐 Administrador"):
                         worksheet.update_cell(linha_para_atualizar, worksheet.find("Data de devolução").col, data_hoje)
                         worksheet.update_cell(linha_para_atualizar, worksheet.find("Situação").col, "Devolvido")
                         st.success(f"Devolução registrada para '{linha_devolucao['Título do Livro']}' com data {data_hoje}.")
-                        st.rerun()
+                        st.experimental_rerun()
 
         except Exception as e:
             st.error(f"Erro ao carregar dados para devolução: {e}")
