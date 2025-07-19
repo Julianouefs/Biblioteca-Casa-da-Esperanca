@@ -36,6 +36,8 @@ if st.session_state.get('login_time'):
 # 📄 Planilha local
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 df = None
+dados_emprestimos = []
+
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
@@ -116,7 +118,7 @@ with st.expander("🔐 Administrador"):
                     st.success("Login realizado com sucesso.")
                     st.session_state.modo_admin = True
                     st.session_state.login_time = datetime.now()
-                    st.rerun()
+                    st.experimental_rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
@@ -130,7 +132,7 @@ with st.expander("🔐 Administrador"):
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
-                    st.rerun()
+                    st.experimental_rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
@@ -150,7 +152,6 @@ with st.expander("🔐 Administrador"):
 
         # =====================
         # 📘 Registro de Empréstimos
-        st.subheader("📘 Registro de Empréstimos")
 
         def validar_codigo(codigo):
             return re.match(r"^[\w\sÁ-ÿçÇ\-/_.]+$", codigo.strip(), re.UNICODE) is not None
@@ -181,12 +182,58 @@ with st.expander("🔐 Administrador"):
                             codigo_livro.strip(),
                             nome_livro,
                             str(data_emprestimo),
-                            "",  # Data de devolução
+                            "",  # Data de devolução vazia
                             "Emprestado"
                         ]
                         try:
                             worksheet.append_row(nova_linha)
                             st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                            st.rerun()
+                            st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Erro ao registrar o empréstimo: {e}")
+
+        # =====================
+        # 📗 Registro de Devoluções
+
+        st.subheader("📗 Registrar Devolução")
+
+        try:
+            emprestimos_ativos = [linha for linha in dados_emprestimos
+                                 if linha.get("Situação", "").lower() == "emprestado"
+                                 and not linha.get("Data de devolução")]
+
+            if not emprestimos_ativos:
+                st.info("Nenhum empréstimo ativo para devolução.")
+            else:
+                opcoes = [
+                    f"{i+1} - {linha['Nome da pessoa']} - {linha['Título do Livro']} (Código: {linha['Código do livro']}) - Empréstimo: {linha['Data do empréstimo']}"
+                    for i, linha in enumerate(emprestimos_ativos)
+                ]
+                escolha = st.selectbox("Selecione o empréstimo para registrar devolução:", opcoes)
+
+                if st.button("Registrar devolução"):
+                    idx = opcoes.index(escolha)
+                    linha_devolucao = emprestimos_ativos[idx]
+
+                    all_records = worksheet.get_all_records()
+                    linha_para_atualizar = None
+                    for i, record in enumerate(all_records, start=2):  # Cabeçalho é linha 1
+                        if (record["Nome da pessoa"] == linha_devolucao["Nome da pessoa"] and
+                            record["Código do livro"].strip().lower() == linha_devolucao["Código do livro"].strip().lower() and
+                            record["Data do empréstimo"] == linha_devolucao["Data do empréstimo"] and
+                            (not record.get("Data de devolução"))):
+                            linha_para_atualizar = i
+                            break
+
+                    if linha_para_atualizar is None:
+                        st.error("Não foi possível localizar o empréstimo na planilha para atualizar.")
+                    else:
+                        data_hoje = datetime.now().strftime("%Y-%m-%d")
+                        # Atualiza as colunas "Data de devolução" e "Situação"
+                        worksheet.update_cell(linha_para_atualizar, worksheet.find("Data de devolução").col, data_hoje)
+                        worksheet.update_cell(linha_para_atualizar, worksheet.find("Situação").col, "Devolvido")
+                        st.success(f"Devolução registrada para '{linha_devolucao['Título do Livro']}' com data {data_hoje}.")
+                        st.experimental_rerun()
+
+        except Exception as e:
+            st.error(f"Erro ao carregar dados para devolução: {e}")
