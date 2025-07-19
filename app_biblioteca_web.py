@@ -1,111 +1,192 @@
 import streamlit as st
 import pandas as pd
+import os
+import unicodedata
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import date
-import unicodedata
+from datetime import datetime, timedelta
+import hashlib
+import re
+import io
 
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
 st.title("📚 Biblioteca Casa da Esperança")
 
-# URL da planilha de livros (.xlsx) no GitHub
-URL_PLANILHA_LIVROS = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/planilha_livros.xlsx"
+# =====================
+# 🔐 Segurança e autenticação
+def hash_senha(senha):
+    return hashlib.sha256(senha.encode()).hexdigest()
 
-# Função para normalizar strings
-def normalizar(texto):
-    if pd.isna(texto):
-        return ""
-    return unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("utf-8").lower().strip()
+LOGIN_CORRETO = st.secrets["admin"]["usuario"]
+SENHA_CORRETA_HASH = hash_senha(st.secrets["admin"]["senha"])
+ID_PLANILHA_EMPRESTIMOS = st.secrets["google"]["planilha_emprestimos_id"]
 
-# Carregar planilha de livros do GitHub (.xlsx)
-@st.cache_data
-def carregar_livros():
-    df = pd.read_excel(URL_PLANILHA_LIVROS)
-    df["codigo"] = df["codigo"].astype(str)
-    df["quantidade"] = df["quantidade"].fillna(0).astype(int)
-    return df
+# =====================
+# Sessão admin
+if 'modo_admin' not in st.session_state:
+    st.session_state.modo_admin = False
 
-# Autenticar com Google Sheets
-@st.cache_resource
-def autenticar_gsheets():
-    escopos = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], escopos)
-    cliente = gspread.authorize(credenciais)
-    planilha = cliente.open_by_key(st.secrets["google_sheets_key"])
-    aba = planilha.worksheet("emprestimos")
-    return aba
+if st.session_state.get('login_time'):
+    if datetime.now() - st.session_state.login_time > timedelta(minutes=30):
+        st.session_state.modo_admin = False
+        del st.session_state['login_time']
+        st.warning("Sessão expirada. Faça login novamente.")
 
-# Carregar planilha de empréstimos
-def carregar_emprestimos():
-    aba = autenticar_gsheets()
-    registros = aba.get_all_records()
-    return pd.DataFrame(registros)
+# =====================
+# 📄 Planilha local
+ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
+df = None
+if os.path.exists(ARQUIVO_PLANILHA):
+    try:
+        df = pd.read_excel(ARQUIVO_PLANILHA)
 
-# Salvar novo empréstimo
-def registrar_emprestimo(nome, codigo, titulo):
-    aba = autenticar_gsheets()
-    hoje = date.today().strftime("%d/%m/%Y")
-    nova_linha = [nome, titulo, codigo, hoje, "", "emprestado"]
-    aba.append_row(nova_linha)
-    st.success("Empréstimo registrado com sucesso!")
-    st.rerun()
+        # 🔄 Verifica situação atual com base nos empréstimos
+        try:
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+                st.secrets["google_service_account"], scope
+            )
+            gc = gspread.authorize(credentials)
+            worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+            dados_emprestimos = worksheet.get_all_records()
 
-# Interface de busca
-st.subheader("🔎 Buscar livros")
+            codigos_emprestados = [
+                linha["Código do livro"].strip().lower()
+                for linha in dados_emprestimos
+                if linha.get("Situação", "").lower() == "emprestado"
+                and not linha.get("Data de devolução")
+            ]
 
-df_livros = carregar_livros()
-df_emprestimos = carregar_emprestimos()
+            emprestimos_por_codigo = pd.Series(codigos_emprestados).value_counts().to_dict()
 
-filtro = st.selectbox("Buscar por:", ["Título", "Autor", "Código"])
-busca = st.text_input("Digite sua busca:")
+            def calcular_disponibilidade(row):
+                total = int(row["quantidade"])
+                emprestado = emprestimos_por_codigo.get(str(row["codigo"]).strip().lower(), 0)
+                disponivel = total - emprestado
+                return f"{disponivel}/{total} disponíveis"
 
-if busca:
-    busca_normalizada = normalizar(busca)
-    if filtro == "Título":
-        resultado = df_livros[df_livros["Título do Livro"].apply(normalizar).str.contains(busca_normalizada)]
-    elif filtro == "Autor":
-        resultado = df_livros[df_livros["Autor"].apply(normalizar).str.contains(busca_normalizada)]
-    else:
-        resultado = df_livros[df_livros["codigo"].apply(normalizar).str.contains(busca_normalizada)]
+            df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
+
+        except Exception as e:
+            st.error(f"Erro ao verificar situação dos livros: {e}")
+
+    except:
+        st.error("Erro ao ler a planilha salva.")
 else:
-    resultado = df_livros.copy()
+    st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
 
-# Cálculo de empréstimos ativos
-emprestimos_ativos = df_emprestimos[df_emprestimos["Situação"].str.lower() == "emprestado"]
-emprestimos_por_codigo = emprestimos_ativos["Código"].str.lower().value_counts().to_dict()
+# =====================
+# Função para remover acentos
+def remover_acentos(texto):
+    if isinstance(texto, str):
+        return ''.join(c for c in unicodedata.normalize('NFD', texto)
+                       if unicodedata.category(c) != 'Mn').lower()
+    return texto
 
-# Mostrar resultados
-for _, linha in resultado.iterrows():
-    cod = str(linha["codigo"]).lower().strip()
-    total = linha["quantidade"]
-    emprestados = emprestimos_por_codigo.get(cod, 0)
-    disponiveis = max(total - emprestados, 0)
+# =====================
+# 🔍 Tela pública de pesquisa
+if df is not None:
+    st.subheader("🔍 Pesquisa de Livros")
+    coluna_busca = st.selectbox("Buscar por:", ["Título do Livro", "Autor", "codigo"])
+    termo = st.text_input(f"Digite o termo para buscar em '{coluna_busca}'")
 
-    with st.expander(f"{linha['Título do Livro']}"):
-        st.write(f"**Autor:** {linha['Autor']}")
-        st.write(f"**Código:** {linha['codigo']}")
-        st.write(f"**Situação:** {disponiveis}/{total} disponíveis")
+    if termo:
+        termo_normalizado = remover_acentos(termo)
+        resultado = df[df[coluna_busca].astype(str).apply(remover_acentos).str.contains(termo_normalizado, na=False)]
+        st.write(f"🔎 {len(resultado)} resultado(s) encontrado(s):")
+        st.dataframe(resultado)
+    else:
+        st.write("📋 Todos os livros:")
+        st.dataframe(df)
 
-# Interface de empréstimo
-st.subheader("📥 Registrar Empréstimo")
+st.divider()
 
-with st.form("form_emprestimo"):
-    nome = st.text_input("Nome do leitor")
-    codigo_digitado = st.text_input("Código do livro")
-    enviar = st.form_submit_button("Registrar empréstimo")
+# =====================
+# 🔒 Área de administração
+with st.expander("🔐 Administrador"):
+    if not st.session_state.modo_admin:
+        with st.form("login_form"):
+            st.write("Área restrita para administradores.")
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar")
 
-    if enviar:
-        codigo_normalizado = normalizar(codigo_digitado)
-        livro = df_livros[df_livros["codigo"].apply(normalizar) == codigo_normalizado]
+            if entrar:
+                if usuario == LOGIN_CORRETO and hash_senha(senha) == SENHA_CORRETA_HASH:
+                    st.success("Login realizado com sucesso.")
+                    st.session_state.modo_admin = True
+                    st.session_state.login_time = datetime.now()
+                    st.rerun()
+                else:
+                    st.error("Usuário ou senha incorretos.")
+    else:
+        st.subheader("🛠️ Upload de nova planilha")
+        arquivo_novo = st.file_uploader("Carregar planilha .xlsx", type=["xlsx"])
+        if arquivo_novo:
+            try:
+                df_novo = pd.read_excel(arquivo_novo)
+                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor"]):
+                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro' e 'Autor'")
+                else:
+                    df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
+                    st.success("Planilha atualizada com sucesso!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao processar o arquivo: {e}")
 
-        if not livro.empty:
-            titulo_livro = livro.iloc[0]["Título do Livro"]
-            total = int(livro.iloc[0]["quantidade"])
-            emprestados = emprestimos_por_codigo.get(codigo_normalizado, 0)
-
-            if emprestados < total:
-                registrar_emprestimo(nome, codigo_digitado.strip(), titulo_livro)
-            else:
-                st.error("Não há exemplares disponíveis para empréstimo.")
+        st.subheader("📄 Baixar planilha atual")
+        if df is not None:
+            buffer = io.BytesIO()
+            df.to_excel(buffer, index=False, engine='openpyxl')
+            buffer.seek(0)
+            st.download_button(
+                label="📅 Baixar planilha",
+                data=buffer,
+                file_name="planilha_biblioteca_backup.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         else:
-            st.error("Código do livro inválido.")
+            st.info("Nenhuma planilha disponível para download.")
+
+        # =====================
+        # 📘 Registro de Empréstimos
+        st.subheader("📘 Registro de Empréstimos")
+
+        def validar_codigo(codigo):
+            return re.match(r"^[\w\sÁ-ÿçÇ\-/_.]+$", codigo.strip(), re.UNICODE) is not None
+
+        with st.form("form_emprestimo"):
+            nome_pessoa = st.text_input("Nome da pessoa")
+            codigo_livro = st.text_input("Código do livro")
+            data_emprestimo = st.date_input("Data do empréstimo")
+            enviar = st.form_submit_button("Registrar Empréstimo")
+
+            if enviar:
+                if not nome_pessoa.strip():
+                    st.warning("Informe o nome da pessoa.")
+                elif not validar_codigo(codigo_livro):
+                    st.warning("Código do livro inválido.")
+                else:
+                    nome_livro = ""
+                    if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
+                        match = df[df["codigo"].astype(str).str.lower().str.strip() == codigo_livro.lower().strip()]
+                        if not match.empty:
+                            nome_livro = match.iloc[0]["Título do Livro"]
+
+                    if nome_livro == "":
+                        st.warning("Código de livro não encontrado na planilha principal.")
+                    else:
+                        nova_linha = [
+                            nome_pessoa.strip(),
+                            codigo_livro.strip(),
+                            nome_livro,
+                            str(data_emprestimo),
+                            "",  # Data de devolução
+                            "Emprestado"
+                        ]
+                        try:
+                            worksheet.append_row(nova_linha)
+                            st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao registrar o empréstimo: {e}")
