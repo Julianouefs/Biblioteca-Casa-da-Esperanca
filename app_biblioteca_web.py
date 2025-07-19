@@ -50,16 +50,22 @@ if os.path.exists(ARQUIVO_PLANILHA):
             worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
             dados_emprestimos = worksheet.get_all_records()
 
-            codigos_emprestados = {
+            codigos_emprestados = [
                 linha["Código do livro"].strip().lower()
                 for linha in dados_emprestimos
                 if linha.get("Situação", "").lower() == "emprestado"
                 and not linha.get("Data de devolução")
-            }
+            ]
 
-            df["Situação"] = df["codigo"].astype(str).str.strip().str.lower().apply(
-                lambda cod: "Emprestado" if cod in codigos_emprestados else "Disponível"
-            )
+            emprestimos_por_codigo = pd.Series(codigos_emprestados).value_counts().to_dict()
+
+            def calcular_disponibilidade(row):
+                total = int(row["quantidade"])
+                emprestado = emprestimos_por_codigo.get(str(row["codigo"]).strip().lower(), 0)
+                disponivel = total - emprestado
+                return f"{disponivel}/{total} disponíveis"
+
+            df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
 
         except Exception as e:
             st.error(f"Erro ao verificar situação dos livros: {e}")
@@ -128,13 +134,13 @@ with st.expander("🔐 Administrador"):
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
-        st.subheader("📤 Baixar planilha atual")
+        st.subheader("📄 Baixar planilha atual")
         if df is not None:
             buffer = io.BytesIO()
             df.to_excel(buffer, index=False, engine='openpyxl')
             buffer.seek(0)
             st.download_button(
-                label="📥 Baixar planilha",
+                label="📅 Baixar planilha",
                 data=buffer,
                 file_name="planilha_biblioteca_backup.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -181,5 +187,6 @@ with st.expander("🔐 Administrador"):
                         try:
                             worksheet.append_row(nova_linha)
                             st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                            st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Erro ao registrar o empréstimo: {e}")
