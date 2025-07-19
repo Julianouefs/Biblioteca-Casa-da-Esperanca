@@ -1,267 +1,164 @@
 import streamlit as st
 import pandas as pd
-import os
-import unicodedata
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, timedelta
-import hashlib
-import re
+from datetime import date
+import unicodedata
 import io
+import requests
 
+# CONFIGURAÇÕES INICIAIS
 st.set_page_config(page_title="Biblioteca Casa da Esperança", layout="centered")
 st.title("📚 Biblioteca Casa da Esperança")
 
-# =====================
-# 🔐 Segurança e autenticação
-def hash_senha(senha):
-    return hashlib.sha256(senha.encode()).hexdigest()
+# URL do arquivo da planilha base de livros (GitHub)
+URL_PLANILHA_LIVROS = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/planilha_livros.xlsx"
 
-LOGIN_CORRETO = st.secrets["admin"]["usuario"]
-SENHA_CORRETA_HASH = hash_senha(st.secrets["admin"]["senha"])
-ID_PLANILHA_EMPRESTIMOS = st.secrets["google"]["planilha_emprestimos_id"]
+# Função para normalizar e padronizar texto
+def normalizar_texto(texto):
+    return unicodedata.normalize("NFKD", str(texto).strip().lower()).encode("ASCII", "ignore").decode("utf-8")
 
-# =====================
-# Sessão admin
-if 'modo_admin' not in st.session_state:
-    st.session_state.modo_admin = False
+# Carregar planilha de livros do GitHub (formato .xlsx)
+@st.cache_data
+def carregar_livros():
+    try:
+        resposta = requests.get(URL_PLANILHA_LIVROS)
+        if resposta.status_code == 200:
+            df = pd.read_excel(io.BytesIO(resposta.content))
+            df.columns = df.columns.str.strip()
+            return df
+        else:
+            st.error("Erro ao carregar a planilha de livros do GitHub.")
+            return None
+    except Exception as e:
+        st.error(f"Erro ao carregar a planilha: {e}")
+        return None
 
-if st.session_state.get('login_time'):
-    if datetime.now() - st.session_state.login_time > timedelta(minutes=30):
-        st.session_state.modo_admin = False
-        del st.session_state['login_time']
-        st.warning("Sessão expirada. Faça login novamente.")
+# Conectar à planilha de empréstimos no Google Sheets
+def conectar_planilha_google():
+    try:
+        escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credenciais = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], escopos)
+        cliente = gspread.authorize(credenciais)
+        planilha = cliente.open_by_key(st.secrets["planilha_emprestimos_key"])
+        aba = planilha.worksheet("Página1")
+        return aba
+    except Exception as e:
+        st.error("Erro ao autenticar com o Google Sheets.")
+        return None
 
-# =====================
-# Função para carregar empréstimos do Google Sheets
+# Carregar dados da planilha de empréstimos
 def carregar_emprestimos():
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-            st.secrets["google_service_account"], scope
-        )
-        gc = gspread.authorize(credentials)
-        worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
-        dados = worksheet.get_all_records()
-        return dados, worksheet
+        aba = conectar_planilha_google()
+        if aba:
+            registros = aba.get_all_records()
+            return registros, aba
+        return [], None
     except Exception as e:
-        st.error(f"Erro ao carregar dados da planilha de empréstimos: {e}")
+        st.error(f"Erro ao carregar empréstimos: {e}")
         return [], None
 
-# =====================
-# 📄 Planilha local - lista de livros
-ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
-df = None
-if os.path.exists(ARQUIVO_PLANILHA):
-    try:
-        df = pd.read_excel(ARQUIVO_PLANILHA)
-    except:
-        st.error("Erro ao ler a planilha salva.")
-else:
-    st.warning("Nenhuma planilha carregada ainda. Acesse a administração para carregar.")
+# Validar código do livro
+def validar_codigo(codigo):
+    return isinstance(codigo, str) and codigo.strip() != ""
 
-# =====================
-# Função para remover acentos
-def remover_acentos(texto):
-    if isinstance(texto, str):
-        return ''.join(c for c in unicodedata.normalize('NFD', texto)
-                       if unicodedata.category(c) != 'Mn').lower()
-    return texto
+# ============================
+# INÍCIO DA APLICAÇÃO
+# ============================
 
-# =====================
-# Carregar empréstimos e worksheet
+df = carregar_livros()
 dados_emprestimos, worksheet = carregar_emprestimos()
 
-# =====================
-# Calcular disponibilidade dinamicamente (sem salvar no Excel local)
-if df is not None and dados_emprestimos:
-    codigos_emprestados = [
-        linha["Código do livro"].strip().lower()
-        for linha in dados_emprestimos
-        if linha.get("Situação", "").lower() == "emprestado"
-        and not linha.get("Data de devolução")
-    ]
+aba_busca = st.sidebar.selectbox("Escolha a opção", ["Buscar Livro", "Registrar Empréstimo"])
 
-    emprestimos_por_codigo = pd.Series(codigos_emprestados).value_counts().to_dict()
+if aba_busca == "Buscar Livro":
+    st.subheader("🔍 Buscar Livro")
+    campo_busca = st.selectbox("Buscar por", ["Título", "Autor", "Código"])
+    texto_busca = st.text_input("Digite o texto da busca:")
 
-    def calcular_disponibilidade(row):
-        total = int(row["quantidade"])
-        emprestado = emprestimos_por_codigo.get(str(row["codigo"]).strip().lower(), 0)
-        disponivel = total - emprestado
-        return f"{disponivel}/{total} disponíveis"
+    if texto_busca:
+        texto_busca_normalizado = normalizar_texto(texto_busca)
 
-    # Atualiza o DataFrame na memória só para exibição
-    df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
+        if campo_busca == "Título":
+            df_filtrado = df[df["Título do Livro"].apply(normalizar_texto).str.contains(texto_busca_normalizado)]
+        elif campo_busca == "Autor":
+            df_filtrado = df[df["Autor"].apply(normalizar_texto).str.contains(texto_busca_normalizado)]
+        else:  # Código
+            df_filtrado = df[df["codigo"].apply(str).str.lower().str.strip() == texto_busca_normalizado.strip()]
 
-# =====================
-# 🔍 Tela pública de pesquisa
-if df is not None:
-    st.subheader("🔍 Pesquisa de Livros")
-    coluna_busca = st.selectbox("Buscar por:", ["Título do Livro", "Autor", "codigo"])
-    termo = st.text_input(f"Digite o termo para buscar em '{coluna_busca}'")
+        if not df_filtrado.empty:
+            for _, row in df_filtrado.iterrows():
+                st.markdown(f"**Título:** {row['Título do Livro']}")
+                st.markdown(f"**Autor:** {row['Autor']}")
+                st.markdown(f"**Gênero:** {row['Gênero']}")
+                st.markdown(f"**Código:** `{row['codigo']}`")
 
-    if termo:
-        termo_normalizado = remover_acentos(termo)
-        resultado = df[df[coluna_busca].astype(str).apply(remover_acentos).str.contains(termo_normalizado, na=False)]
-        st.write(f"🔎 {len(resultado)} resultado(s) encontrado(s):")
-        st.dataframe(resultado)
-    else:
-        st.write("📋 Todos os livros:")
-        st.dataframe(df)
-
-st.divider()
-
-# =====================
-# 🔒 Área de administração
-with st.expander("🔐 Administrador"):
-    if not st.session_state.modo_admin:
-        with st.form("login_form"):
-            st.write("Área restrita para administradores.")
-            usuario = st.text_input("Usuário")
-            senha = st.text_input("Senha", type="password")
-            entrar = st.form_submit_button("Entrar")
-
-            if entrar:
-                if usuario == LOGIN_CORRETO and hash_senha(senha) == SENHA_CORRETA_HASH:
-                    st.success("Login realizado com sucesso.")
-                    st.session_state.modo_admin = True
-                    st.session_state.login_time = datetime.now()
-                    st.experimental_rerun()
-                else:
-                    st.error("Usuário ou senha incorretos.")
-    else:
-        st.subheader("🛠️ Upload de nova planilha")
-        arquivo_novo = st.file_uploader("Carregar planilha .xlsx", type=["xlsx"])
-        if arquivo_novo:
-            try:
-                df_novo = pd.read_excel(arquivo_novo)
-                if not all(col in df_novo.columns for col in ["codigo", "Título do Livro", "Autor"]):
-                    st.error("A planilha deve conter as colunas: 'codigo', 'Título do Livro' e 'Autor'")
-                else:
-                    df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
-                    st.success("Planilha atualizada com sucesso!")
-                    st.experimental_rerun()
-            except Exception as e:
-                st.error(f"Erro ao processar o arquivo: {e}")
-
-        st.subheader("📄 Baixar planilha atual")
-        if df is not None:
-            buffer = io.BytesIO()
-            df.to_excel(buffer, index=False, engine='openpyxl')
-            buffer.seek(0)
-            st.download_button(
-                label="📅 Baixar planilha",
-                data=buffer,
-                file_name="planilha_biblioteca_backup.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                # Cálculo da disponibilidade
+                total = int(row["quantidade"])
+                emprestados = sum(
+                    1 for emprestimo in dados_emprestimos
+                    if emprestimo.get("Código do livro", "").strip().lower() == str(row["codigo"]).strip().lower()
+                    and emprestimo.get("Situação", "").lower() == "emprestado"
+                    and not emprestimo.get("Data de devolução")
+                )
+                disponivel = total - emprestados
+                st.markdown(f"**Disponibilidade:** {disponivel}/{total} disponíveis")
+                st.markdown("---")
         else:
-            st.info("Nenhuma planilha disponível para download.")
+            st.warning("Nenhum livro encontrado com esse critério.")
 
-        # =====================
-        # 📘 Registro de Empréstimos
+elif aba_busca == "Registrar Empréstimo":
+    st.subheader("📥 Registrar Empréstimo")
 
-        def validar_codigo(codigo):
-            return re.match(r"^[\w\sÁ-ÿçÇ\-/_.]+$", codigo.strip(), re.UNICODE) is not None
+    with st.form("form_emprestimo"):
+        nome_pessoa = st.text_input("Nome da pessoa")
+        codigo_livro = st.text_input("Código do livro")
+        data_emprestimo = st.date_input("Data do empréstimo", value=date.today())
+        enviar = st.form_submit_button("Registrar Empréstimo")
 
-        with st.form("form_emprestimo"):
-            nome_pessoa = st.text_input("Nome da pessoa")
-            codigo_livro = st.text_input("Código do livro")
-            data_emprestimo = st.date_input("Data do empréstimo")
-            enviar = st.form_submit_button("Registrar Empréstimo")
-
-            if enviar:
-                if not nome_pessoa.strip():
-                    st.warning("Informe o nome da pessoa.")
-                elif not validar_codigo(codigo_livro):
-                    st.warning("Código do livro inválido.")
-                else:
-                    nome_livro = ""
-                    if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
-                        match = df[df["codigo"].astype(str).str.lower().str.strip() == codigo_livro.lower().strip()]
-                        if not match.empty:
-                            nome_livro = match.iloc[0]["Título do Livro"]
-
-                    if nome_livro == "":
-                        st.warning("Código de livro não encontrado na planilha principal.")
-                    else:
-                        nova_linha = [
-                            nome_pessoa.strip(),
-                            codigo_livro.strip(),
-                            nome_livro,
-                            str(data_emprestimo),
-                            "",  # Data de devolução vazia
-                            "Emprestado"
-                        ]
-                        try:
-                            worksheet.append_row(nova_linha)
-
-                            # Recarregar empréstimos para atualizar status
-                            global dados_emprestimos
-                            dados_emprestimos, _ = carregar_emprestimos()
-
-                            # Contar empréstimos ativos do código do livro
-                            emprestimos_ativos_do_livro = sum(
-                                1 for linha in dados_emprestimos
-                                if linha.get("Código do livro", "").strip().lower() == codigo_livro.lower().strip()
-                                and linha.get("Situação", "").lower() == "emprestado"
-                                and not linha.get("Data de devolução")
-                            )
-
-                            # Buscar quantidade total do livro na planilha base
-                            quantidade_total = int(match.iloc[0]["quantidade"])
-
-                            disponivel = quantidade_total - emprestimos_ativos_do_livro
-
-                            st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                            st.info(f"Disponibilidade atual para o livro '{nome_livro}': {disponivel}/{quantidade_total} disponíveis.")
-
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao registrar o empréstimo: {e}")
-
-        # =====================
-        # 📗 Registro de Devoluções
-
-        st.subheader("📗 Registrar Devolução")
-
-        try:
-            emprestimos_ativos = [linha for linha in dados_emprestimos
-                                 if linha.get("Situação", "").lower() == "emprestado"
-                                 and not linha.get("Data de devolução")]
-
-            if not emprestimos_ativos:
-                st.info("Nenhum empréstimo ativo para devolução.")
+        if enviar:
+            if not nome_pessoa.strip():
+                st.warning("Informe o nome da pessoa.")
+            elif not validar_codigo(codigo_livro):
+                st.warning("Código do livro inválido.")
             else:
-                opcoes = [
-                    f"{i+1} - {linha['Nome da pessoa']} - {linha['Título do Livro']} (Código: {linha['Código do livro']}) - Empréstimo: {linha['Data do empréstimo']}"
-                    for i, linha in enumerate(emprestimos_ativos)
-                ]
-                escolha = st.selectbox("Selecione o empréstimo para registrar devolução:", opcoes)
+                nome_livro = ""
+                if df is not None and "codigo" in df.columns and "Título do Livro" in df.columns:
+                    match = df[df["codigo"].astype(str).str.lower().str.strip() == codigo_livro.lower().strip()]
+                    if not match.empty:
+                        nome_livro = match.iloc[0]["Título do Livro"]
 
-                if st.button("Registrar devolução"):
-                    idx = opcoes.index(escolha)
-                    linha_devolucao = emprestimos_ativos[idx]
+                if nome_livro == "":
+                    st.warning("Código de livro não encontrado na planilha principal.")
+                else:
+                    nova_linha = [
+                        nome_pessoa.strip(),
+                        codigo_livro.strip(),
+                        nome_livro,
+                        str(data_emprestimo),
+                        "",  # Data de devolução
+                        "Emprestado"
+                    ]
+                    try:
+                        worksheet.append_row(nova_linha)
 
-                    all_records = worksheet.get_all_records()
-                    linha_para_atualizar = None
-                    for i, record in enumerate(all_records, start=2):  # Cabeçalho é linha 1
-                        if (record["Nome da pessoa"] == linha_devolucao["Nome da pessoa"] and
-                            record["Código do livro"].strip().lower() == linha_devolucao["Código do livro"].strip().lower() and
-                            record["Data do empréstimo"] == linha_devolucao["Data do empréstimo"] and
-                            (not record.get("Data de devolução"))):
-                            linha_para_atualizar = i
-                            break
+                        # Recarregar os dados de empréstimos após salvar
+                        dados_emprestimos, worksheet = carregar_emprestimos()
 
-                    if linha_para_atualizar is None:
-                        st.error("Não foi possível localizar o empréstimo na planilha para atualizar.")
-                    else:
-                        data_hoje = datetime.now().strftime("%Y-%m-%d")
-                        # Atualiza as colunas "Data de devolução" e "Situação"
-                        worksheet.update_cell(linha_para_atualizar, worksheet.find("Data de devolução").col, data_hoje)
-                        worksheet.update_cell(linha_para_atualizar, worksheet.find("Situação").col, "Devolvido")
-                        st.success(f"Devolução registrada para '{linha_devolucao['Título do Livro']}' com data {data_hoje}.")
+                        # Cálculo de disponibilidade atual
+                        emprestimos_ativos = sum(
+                            1 for linha in dados_emprestimos
+                            if linha.get("Código do livro", "").strip().lower() == codigo_livro.lower().strip()
+                            and linha.get("Situação", "").lower() == "emprestado"
+                            and not linha.get("Data de devolução")
+                        )
+                        quantidade_total = int(match.iloc[0]["quantidade"])
+                        disponivel = quantidade_total - emprestimos_ativos
+
+                        st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
+                        st.info(f"Disponibilidade atual para o livro '{nome_livro}': {disponivel}/{quantidade_total} disponíveis.")
+
                         st.experimental_rerun()
-
-        except Exception as e:
-            st.error(f"Erro ao carregar dados para devolução: {e}")
+                    except Exception as e:
+                        st.error(f"Erro ao registrar o empréstimo: {e}")
