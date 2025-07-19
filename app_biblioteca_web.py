@@ -33,45 +33,28 @@ if st.session_state.get('login_time'):
         st.warning("Sessão expirada. Faça login novamente.")
 
 # =====================
+# Função para carregar empréstimos do Google Sheets
+def carregar_emprestimos():
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            st.secrets["google_service_account"], scope
+        )
+        gc = gspread.authorize(credentials)
+        worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
+        dados = worksheet.get_all_records()
+        return dados, worksheet
+    except Exception as e:
+        st.error(f"Erro ao carregar dados da planilha de empréstimos: {e}")
+        return [], None
+
+# =====================
 # 📄 Planilha local
 ARQUIVO_PLANILHA = "planilha_biblioteca.xlsx"
 df = None
-dados_emprestimos = []
-
 if os.path.exists(ARQUIVO_PLANILHA):
     try:
         df = pd.read_excel(ARQUIVO_PLANILHA)
-
-        # 🔄 Verifica situação atual com base nos empréstimos
-        try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-                st.secrets["google_service_account"], scope
-            )
-            gc = gspread.authorize(credentials)
-            worksheet = gc.open_by_key(ID_PLANILHA_EMPRESTIMOS).sheet1
-            dados_emprestimos = worksheet.get_all_records()
-
-            codigos_emprestados = [
-                linha["Código do livro"].strip().lower()
-                for linha in dados_emprestimos
-                if linha.get("Situação", "").lower() == "emprestado"
-                and not linha.get("Data de devolução")
-            ]
-
-            emprestimos_por_codigo = pd.Series(codigos_emprestados).value_counts().to_dict()
-
-            def calcular_disponibilidade(row):
-                total = int(row["quantidade"])
-                emprestado = emprestimos_por_codigo.get(str(row["codigo"]).strip().lower(), 0)
-                disponivel = total - emprestado
-                return f"{disponivel}/{total} disponíveis"
-
-            df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
-
-        except Exception as e:
-            st.error(f"Erro ao verificar situação dos livros: {e}")
-
     except:
         st.error("Erro ao ler a planilha salva.")
 else:
@@ -84,6 +67,30 @@ def remover_acentos(texto):
         return ''.join(c for c in unicodedata.normalize('NFD', texto)
                        if unicodedata.category(c) != 'Mn').lower()
     return texto
+
+# =====================
+# Carregar empréstimos e worksheet
+dados_emprestimos, worksheet = carregar_emprestimos()
+
+# =====================
+# Atualizar disponibilidade no dataframe df
+if df is not None and dados_emprestimos:
+    codigos_emprestados = [
+        linha["Código do livro"].strip().lower()
+        for linha in dados_emprestimos
+        if linha.get("Situação", "").lower() == "emprestado"
+        and not linha.get("Data de devolução")
+    ]
+
+    emprestimos_por_codigo = pd.Series(codigos_emprestados).value_counts().to_dict()
+
+    def calcular_disponibilidade(row):
+        total = int(row["quantidade"])
+        emprestado = emprestimos_por_codigo.get(str(row["codigo"]).strip().lower(), 0)
+        disponivel = total - emprestado
+        return f"{disponivel}/{total} disponíveis"
+
+    df["Situação"] = df.apply(calcular_disponibilidade, axis=1)
 
 # =====================
 # 🔍 Tela pública de pesquisa
@@ -118,7 +125,7 @@ with st.expander("🔐 Administrador"):
                     st.success("Login realizado com sucesso.")
                     st.session_state.modo_admin = True
                     st.session_state.login_time = datetime.now()
-                    st.rerun()
+                    st.experimental_rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
     else:
@@ -132,7 +139,7 @@ with st.expander("🔐 Administrador"):
                 else:
                     df_novo.to_excel(ARQUIVO_PLANILHA, index=False)
                     st.success("Planilha atualizada com sucesso!")
-                    st.rerun()
+                    st.experimental_rerun()
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
@@ -187,8 +194,9 @@ with st.expander("🔐 Administrador"):
                         ]
                         try:
                             worksheet.append_row(nova_linha)
+                            # Atualiza dados_emprestimos e worksheet para refletir a mudança
                             st.success(f"✅ Empréstimo de '{nome_livro}' registrado com sucesso.")
-                            st.rerun()
+                            st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Erro ao registrar o empréstimo: {e}")
 
